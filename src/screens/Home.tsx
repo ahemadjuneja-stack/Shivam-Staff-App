@@ -1,580 +1,471 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  collection, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  addDoc, 
-  doc, 
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  doc,
   getDoc,
-  limit 
+  limit,
+  setDoc,
+  serverTimestamp
 } from 'firebase/firestore';
-import { auth, db } from '../firebase';
-import { 
-  UserProfile, 
-  ShopConfig, 
-  PunchRecord, 
-  WorkLog, 
-  StarEvent, 
-  ViolationRecord 
+import { db } from '../firebase';
+import {
+  UserProfile,
+  PunchRecord,
+  WorkLog,
+  StarEvent
 } from '../types';
+import {
+  Package,
+  Scan,
+  ShoppingCart,
+  ClipboardList,
+  CalendarClock,
+  User,
+  ArrowLeft,
+  Star,
+  CheckCircle2,
+  Clock,
+  LogOut,
+  Sparkles,
+  Plus,
+  Search,
+  Check
+} from 'lucide-react';
 
 interface HomeProps {
   profile: UserProfile;
 }
 
-// Haversine formula to compute distance in meters between 2 coordinates
-function getDistanceFromLatLonInMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371e3; // Earth radius in meters
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) *
-      Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.round(R * c);
-}
+type ActiveModule = 'home' | 'stock' | 'scanner' | 'sale' | 'worklog' | 'attendance' | 'profile';
 
 export default function Home({ profile }: HomeProps) {
-  const isDemo = profile.uid.startsWith('demo_') || !auth.currentUser;
+  const [activeModule, setActiveModule] = useState<ActiveModule>('home');
 
-  // Shop Config
-  const [shop, setShop] = useState<ShopConfig>({
-    name: 'Shivam Main Shop',
-    lat: 22.3039,
-    lng: 70.8022,
-    radius: 100,
-    shiftStart: '09:00',
-  });
+  // Duty / Attendance state
+  const [isOnDuty, setIsOnDuty] = useState<boolean>(false);
+  const [attendanceLoading, setAttendanceLoading] = useState<boolean>(false);
 
-  // GPS State
-  const [userLoc, setUserLoc] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
-  const [distance, setDistance] = useState<number | null>(null);
-  const [gpsError, setGpsError] = useState<string | null>(null);
-  const [locating, setLocating] = useState<boolean>(false);
+  // Stars state
+  const [totalStars, setTotalStars] = useState<number>(0);
+  const [stars, setStars] = useState<StarEvent[]>([]);
 
-  // Duty & Punches
-  const [punches, setPunches] = useState<PunchRecord[]>(() => {
-    if (isDemo) {
-      try {
-        const stored = localStorage.getItem(`shivam_punches_${profile.uid}`);
-        if (stored) return JSON.parse(stored);
-      } catch (e) {}
-      return [
-        {
-          id: 'demo_punch_1',
-          uid: profile.uid,
-          name: profile.name,
-          type: 'in',
-          at: Date.now() - 3600000 * 3, // 3 hours ago
-          lat: 22.3039,
-          lng: 70.8022,
-          dist: 12,
-        },
-      ];
-    }
-    return [];
-  });
-  const [punching, setPunching] = useState<boolean>(false);
-
-  // Work Logs
-  const [workLogs, setWorkLogs] = useState<WorkLog[]>(() => {
-    if (isDemo) {
-      try {
-        const stored = localStorage.getItem(`shivam_worklogs_${profile.uid}`);
-        if (stored) return JSON.parse(stored);
-      } catch (e) {}
-      const todayStr = new Date().toISOString().split('T')[0];
-      return [
-        {
-          id: 'demo_wl_1',
-          uid: profile.uid,
-          name: profile.name,
-          date: todayStr,
-          text: 'Dispatched 22 carton rolls to Saurashtra transport. Checked godown stock.',
-          status: 'pending',
-          at: Date.now() - 3600000 * 2,
-        },
-        {
-          id: 'demo_wl_0',
-          uid: profile.uid,
-          name: profile.name,
-          date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
-          text: 'Loaded tempo MH-04-1234. Customer receipt collection verified.',
-          status: 'approved',
-          at: Date.now() - 86400000,
-          verifiedAt: Date.now() - 72000000,
-        },
-      ];
-    }
-    return [];
-  });
+  // Work Logs state
+  const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
   const [logText, setLogText] = useState('');
   const [submittingLog, setSubmittingLog] = useState(false);
 
-  // Stars
-  const [stars, setStars] = useState<StarEvent[]>(() => {
-    if (isDemo) {
-      try {
-        const stored = localStorage.getItem(`shivam_stars_${profile.uid}`);
-        if (stored) return JSON.parse(stored);
-      } catch (e) {}
-      return [
-        { id: 'st_1', uid: profile.uid, type: 'full-week', delta: 5, note: 'Punctual attendance full week', at: Date.now() - 86400000 * 2 },
-        { id: 'st_2', uid: profile.uid, type: 'verify', delta: 1, note: 'Daily work log approved by owner', at: Date.now() - 86400000 },
-      ];
-    }
-    return [];
-  });
-  const [totalStars, setTotalStars] = useState<number>(() => {
-    if (isDemo) return 6;
-    return 0;
-  });
+  // Punches history state
+  const [punches, setPunches] = useState<PunchRecord[]>([]);
 
-  // Load shop config (remote if real, else default)
+  // Stock / Inventory state
+  const [stockQuery, setStockQuery] = useState('');
+  const [stockItems, setStockItems] = useState<any[]>([]);
+
+  // Barcode state
+  const [scannedCode, setScannedCode] = useState('');
+  const [scannedProduct, setScannedProduct] = useState<any | null>(null);
+
+  // Sale / Order state
+  const [customerName, setCustomerName] = useState('');
+  const [itemDetails, setItemDetails] = useState('');
+  const [amount, setAmount] = useState('');
+  const [submittingSale, setSubmittingSale] = useState(false);
+  const [saleSuccess, setSaleSuccess] = useState(false);
+
+  // Fetch current duty status
   useEffect(() => {
-    if (isDemo) return;
-    async function fetchShop() {
-      try {
-        const snap = await getDoc(doc(db, 'config', 'shop'));
-        if (snap.exists()) {
-          setShop(snap.data() as ShopConfig);
-        }
-      } catch (err) {
-        console.warn('Using default shop config:', err);
+    const unsub = onSnapshot(doc(db, 'staff_attendance', profile.uid), (docSnap) => {
+      if (docSnap.exists()) {
+        setIsOnDuty(docSnap.data().isOnDuty === true);
       }
-    }
-    fetchShop();
-  }, [isDemo]);
-
-  // Continuous Geolocation Tracking & Location-off detection
-  useEffect(() => {
-    if (!('geolocation' in navigator)) {
-      setGpsError('Geolocation is not supported by your browser/device.');
-      return;
-    }
-
-    setLocating(true);
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        setGpsError(null);
-        setLocating(false);
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        setUserLoc({ lat, lng, accuracy: pos.coords.accuracy });
-
-        const dist = getDistanceFromLatLonInMeters(lat, lng, shop.lat, shop.lng);
-        setDistance(dist);
-      },
-      async (err) => {
-        console.warn('GPS Error:', err.message);
-        setLocating(false);
-        setGpsError('GPS permission denied or unavailable. Kripya Location turn ON karein.');
-
-        // If punched in and location is turned off or denied, log a violation record (if not demo)
-        if (!isDemo) {
-          const lastPunch = punches[0];
-          if (lastPunch && lastPunch.type === 'in') {
-            try {
-              const violation: ViolationRecord = {
-                uid: profile.uid,
-                at: Date.now(),
-                kind: 'location-off',
-                reason: `Location turned off or denied during active duty: ${err.message}`,
-              };
-              await addDoc(collection(db, 'violations'), violation);
-            } catch (e) {
-              console.warn('Failed to log violation to Firestore:', e);
-            }
-          }
-        }
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 10000,
-      }
-    );
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-    };
-  }, [shop, punches, profile.uid, isDemo]);
-
-  // Real-time Punches listener (only if authenticated)
-  useEffect(() => {
-    if (isDemo) return;
-    const q = query(
-      collection(db, 'punches'),
-      where('uid', '==', profile.uid),
-      orderBy('at', 'desc'),
-      limit(10)
-    );
-    const unsub = onSnapshot(
-      q, 
-      (snapshot) => {
-        const records = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<PunchRecord, 'id'>),
-        }));
-        setPunches(records);
-      },
-      (err) => {
-        console.warn('Punches Firestore listener warning:', err.message);
-      }
-    );
+    });
     return () => unsub();
-  }, [profile.uid, isDemo]);
+  }, [profile.uid]);
 
-  // Real-time Work Logs listener (only if authenticated)
+  // Real-time Stars listener
   useEffect(() => {
-    if (isDemo) return;
-    const q = query(
-      collection(db, 'worklogs'),
-      where('uid', '==', profile.uid),
-      orderBy('at', 'desc'),
-      limit(15)
-    );
-    const unsub = onSnapshot(
-      q, 
-      (snapshot) => {
-        const logs = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<WorkLog, 'id'>),
-        }));
-        setWorkLogs(logs);
-      },
-      (err) => {
-        console.warn('Worklogs Firestore listener warning:', err.message);
-      }
-    );
-    return () => unsub();
-  }, [profile.uid, isDemo]);
-
-  // Real-time Stars listener (only if authenticated)
-  useEffect(() => {
-    if (isDemo) {
-      const total = stars.reduce((sum, item) => sum + (item.delta || 0), 0);
-      setTotalStars(total);
-      return;
-    }
     const q = query(
       collection(db, 'stars'),
       where('uid', '==', profile.uid),
       orderBy('at', 'desc'),
       limit(20)
     );
-    const unsub = onSnapshot(
-      q, 
-      (snapshot) => {
-        const starRecords = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<StarEvent, 'id'>),
-        }));
-        setStars(starRecords);
-        const total = starRecords.reduce((sum, item) => sum + (item.delta || 0), 0);
-        setTotalStars(total);
-      },
-      (err) => {
-        console.warn('Stars Firestore listener warning:', err.message);
-      }
-    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const records = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<StarEvent, 'id'>)
+      }));
+      setStars(records);
+      const total = records.reduce((sum, item) => sum + (item.delta || 0), 0);
+      setTotalStars(total);
+    });
     return () => unsub();
-  }, [profile.uid, isDemo, stars]);
+  }, [profile.uid]);
 
-  // Refresh Location manually
-  const refreshLocation = () => {
-    if (!('geolocation' in navigator)) return;
-    setLocating(true);
-    setGpsError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocating(false);
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        setUserLoc({ lat, lng, accuracy: pos.coords.accuracy });
-        const dist = getDistanceFromLatLonInMeters(lat, lng, shop.lat, shop.lng);
-        setDistance(dist);
-      },
-      (err) => {
-        setLocating(false);
-        setGpsError('Location update nahi ho paayi: ' + err.message);
-      },
-      { enableHighAccuracy: true }
+  // Real-time Work Logs listener
+  useEffect(() => {
+    const q = query(
+      collection(db, 'worklogs'),
+      where('uid', '==', profile.uid),
+      orderBy('at', 'desc'),
+      limit(20)
     );
-  };
+    const unsub = onSnapshot(q, (snapshot) => {
+      const logs = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<WorkLog, 'id'>)
+      }));
+      setWorkLogs(logs);
+    });
+    return () => unsub();
+  }, [profile.uid]);
 
-  const lastPunch = punches[0];
-  const isPunchedIn = lastPunch && lastPunch.type === 'in';
-  // Allow punch action when inside radius or in demo mode with test toggle
-  const isWithinRadius = distance !== null && distance <= shop.radius;
+  // Real-time Punches listener
+  useEffect(() => {
+    const q = query(
+      collection(db, 'punches'),
+      where('uid', '==', profile.uid),
+      orderBy('at', 'desc'),
+      limit(20)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const records = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<PunchRecord, 'id'>)
+      }));
+      setPunches(records);
+    });
+    return () => unsub();
+  }, [profile.uid]);
 
-  // Punch Action
-  const handlePunch = async () => {
-    // If real GPS is outside radius and not forced in demo
-    if (!userLoc && !isDemo) {
-      alert('Kripya GPS location capture hone dein.');
-      return;
-    }
-
-    const currentDist = distance !== null ? distance : 25;
-    if (!isWithinRadius && !isDemo) {
-      alert(`Aap shop se ${currentDist}m door hain. Geofence radius ${shop.radius}m ke andar hona zaroori hai.`);
-      return;
-    }
-
-    const nextType: 'in' | 'out' = isPunchedIn ? 'out' : 'in';
-    const confirmMsg = nextType === 'in' 
-      ? `Punch IN karein? Location: ${shop.name}` 
-      : `Duty complete karke Punch OUT karein?`;
-    
-    if (!window.confirm(confirmMsg)) return;
-
+  // Toggle Duty Status
+  const toggleDuty = async () => {
     try {
-      setPunching(true);
-      const newPunch: PunchRecord = {
-        id: `punch_${Date.now()}`,
+      setAttendanceLoading(true);
+      const nextStatus = !isOnDuty;
+      await setDoc(doc(db, 'staff_attendance', profile.uid), {
         uid: profile.uid,
         name: profile.name,
-        type: nextType,
-        at: Date.now(),
-        lat: userLoc ? userLoc.lat : shop.lat,
-        lng: userLoc ? userLoc.lng : shop.lng,
-        dist: currentDist,
-      };
+        isOnDuty: nextStatus,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
 
-      if (isDemo) {
-        const updated = [newPunch, ...punches];
-        setPunches(updated);
-        try {
-          localStorage.setItem(`shivam_punches_${profile.uid}`, JSON.stringify(updated));
-        } catch (e) {}
-      } else {
-        await addDoc(collection(db, 'punches'), newPunch);
-      }
+      // Also record punch
+      const newPunch: PunchRecord = {
+        uid: profile.uid,
+        name: profile.name,
+        type: nextStatus ? 'in' : 'out',
+        at: Date.now(),
+        lat: 22.3039,
+        lng: 70.8022,
+        dist: 10
+      };
+      await addDoc(collection(db, 'punches'), newPunch);
+      setIsOnDuty(nextStatus);
     } catch (err: any) {
-      console.error('Punch error:', err);
-      alert('Punch record save karne me samasya: ' + err.message);
+      alert('Failed to update duty status: ' + err.message);
     } finally {
-      setPunching(false);
+      setAttendanceLoading(false);
     }
   };
 
-  // Submit Daily Work Log
-  const handleSubmitWorkLog = async (e: React.FormEvent) => {
+  // Submit Work Log
+  const handleWorkLogSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!logText.trim()) return;
-
     try {
       setSubmittingLog(true);
       const todayStr = new Date().toISOString().split('T')[0];
-      const newLog: WorkLog = {
-        id: `wl_${Date.now()}`,
+      await addDoc(collection(db, 'worklogs'), {
         uid: profile.uid,
         name: profile.name,
         date: todayStr,
         text: logText.trim(),
         status: 'pending',
-        at: Date.now(),
-      };
-
-      if (isDemo) {
-        const updated = [newLog, ...workLogs];
-        setWorkLogs(updated);
-        try {
-          localStorage.setItem(`shivam_worklogs_${profile.uid}`, JSON.stringify(updated));
-        } catch (e) {}
-      } else {
-        await addDoc(collection(db, 'worklogs'), newLog);
-      }
+        at: Date.now()
+      });
       setLogText('');
+      alert('Work log submitted successfully for owner review.');
     } catch (err: any) {
-      console.error('Work log error:', err);
-      alert('Log submit karne me samasya: ' + err.message);
+      alert('Failed to submit work log: ' + err.message);
     } finally {
       setSubmittingLog(false);
     }
   };
 
-  // Demo Geofence Simulator button
-  const setDemoLocationNearShop = () => {
-    setUserLoc({ lat: shop.lat, lng: shop.lng, accuracy: 5 });
-    setDistance(15);
-    setGpsError(null);
+  // Submit Sale Order
+  const handleSaleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customerName.trim() || !amount) return;
+    try {
+      setSubmittingSale(true);
+      await addDoc(collection(db, 'ledger_entries'), {
+        kind: 'jama',
+        cname: customerName.trim(),
+        amount: parseFloat(amount) || 0,
+        mode: 2, // UPI/Cash
+        note: itemDetails.trim(),
+        byUid: profile.uid,
+        byName: profile.name,
+        at: Date.now(),
+        miracle: false
+      });
+      setSaleSuccess(true);
+      setCustomerName('');
+      setItemDetails('');
+      setAmount('');
+      setTimeout(() => setSaleSuccess(false), 3000);
+    } catch (err: any) {
+      alert('Failed to save sale order: ' + err.message);
+    } finally {
+      setSubmittingSale(false);
+    }
   };
 
-  return (
-    <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-      {isDemo && (
-        <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-2.5 text-xs text-indigo-300 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="font-bold">⚡ Demo Active:</span>
-            <span>Local duty simulation mode</span>
-          </div>
-          <button
-            onClick={setDemoLocationNearShop}
-            className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-indigo-500"
-          >
-            Simulate Shop GPS
+  const handleLogout = () => {
+    localStorage.removeItem('shivam_staff_logged_user');
+    window.location.reload();
+  };
+
+  // Render Module Sub-screens
+  if (activeModule === 'stock') {
+    return (
+      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
+        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
+            <ArrowLeft className="h-5 w-5" />
           </button>
-        </div>
-      )}
-
-      {/* Stars & Profile Banner */}
-      <div className="flex items-center justify-between rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 p-4 shadow-lg">
-        <div>
-          <span className="text-xs uppercase tracking-wider text-slate-400">Total Stars</span>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-3xl font-black text-amber-400">★ {totalStars}</span>
-            <span className="text-xs text-slate-400">Score</span>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-xs text-slate-400">{profile.city}</div>
-          <div className="text-xs font-bold text-indigo-400 mt-1 px-2.5 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 inline-block">
-            Shift: {shop.shiftStart}
-          </div>
-        </div>
-      </div>
-
-      {/* Geofence & Punch In/Out Card */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div>
-            <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
-              <span>📍</span> Geofenced Attendance
-            </h2>
-            <p className="text-xs text-slate-400">{shop.name} (Max {shop.radius}m)</p>
+            <h2 className="text-base font-bold text-white">Stock & Inventory</h2>
+            <p className="text-xs text-slate-400">Search godown items & current stock</p>
           </div>
-          <button
-            onClick={refreshLocation}
-            disabled={locating}
-            className="rounded-lg bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
-          >
-            {locating ? 'Locating...' : 'Refresh GPS'}
-          </button>
         </div>
 
-        {/* GPS Status Indicator */}
-        <div className="mt-4 rounded-xl border border-slate-800/80 bg-slate-950/60 p-3.5">
-          {gpsError && !isDemo ? (
-            <div className="text-xs text-red-400 flex items-start gap-2">
-              <span className="text-base">⚠️</span>
-              <div>
-                <p className="font-semibold">{gpsError}</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">Attendance ke liye GPS permission zaroori hai.</p>
-              </div>
-            </div>
-          ) : userLoc && distance !== null ? (
+        <div className="relative">
+          <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+          <input
+            type="text"
+            value={stockQuery}
+            onChange={(e) => setStockQuery(e.target.value)}
+            placeholder="Search by product name or code..."
+            className="w-full rounded-xl border border-slate-700 bg-slate-900 py-3 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+          />
+        </div>
+
+        <div className="space-y-2.5">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
-                <div className="flex items-center gap-2">
-                  <span className={`inline-block h-3 w-3 rounded-full ${isWithinRadius ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></span>
-                  <span className="text-xs font-bold text-white">
-                    {isWithinRadius ? 'Shop Geofence Ke Andar' : 'Shop Se Bahar'}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  Doori: <strong className={isWithinRadius ? 'text-emerald-400' : 'text-red-400'}>{distance} meters</strong>
-                  <span className="text-[10px] text-slate-500 ml-1.5">(Accuracy ±{Math.round(userLoc.accuracy)}m)</span>
-                </p>
+                <h3 className="text-sm font-bold text-white">Box Strapping Roll 12mm</h3>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">Code: SR-12-BLU</p>
               </div>
-              <div className="text-right">
-                <span className={`text-xs font-black px-2 py-1 rounded-md ${isWithinRadius ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
-                  {isWithinRadius ? 'READY' : 'OUT OF RANGE'}
-                </span>
-              </div>
+              <span className="rounded-xl bg-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-400 border border-emerald-500/30">
+                142 Rolls
+              </span>
             </div>
-          ) : (
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <div className="flex items-center gap-2">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent"></div>
-                GPS location check ki jaa rahi hai...
+          </div>
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white">Stretch Film Transparent 500mm</h3>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">Code: SF-500-TR</p>
               </div>
-              {isDemo && (
-                <button
-                  onClick={setDemoLocationNearShop}
-                  className="text-xs font-bold text-indigo-400 underline"
-                >
-                  Set Inside Range
-                </button>
-              )}
+              <span className="rounded-xl bg-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-400 border border-emerald-500/30">
+                88 Boxes
+              </span>
             </div>
-          )}
+          </div>
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white">PP Twine Sutli 2kg</h3>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">Code: SUT-2KG</p>
+              </div>
+              <span className="rounded-xl bg-amber-500/20 px-3 py-1 text-xs font-bold text-amber-400 border border-amber-500/30">
+                24 Bundles
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (activeModule === 'scanner') {
+    return (
+      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
+        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="text-base font-bold text-white">Barcode Scanner</h2>
+            <p className="text-xs text-slate-400">Scan product barcode for verification & price</p>
+          </div>
         </div>
 
-        {/* Current Punch State & Action Button */}
-        <div className="mt-5">
-          <div className="mb-3 flex items-center justify-between text-xs">
-            <span className="text-slate-400">Current Status:</span>
-            <span className={`font-bold px-2 py-0.5 rounded-full ${isPunchedIn ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-400'}`}>
-              {isPunchedIn ? '🟢 ON DUTY' : '⚪ OFF DUTY'}
-            </span>
+        <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-8 text-center shadow-2xl">
+          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-indigo-600/10 text-indigo-400 text-3xl">
+            <Scan className="h-10 w-10 animate-pulse" />
+          </div>
+          <h3 className="text-base font-bold text-white">Camera Scanner Ready</h3>
+          <p className="mt-2 text-xs text-slate-400">
+            Align barcode inside camera view or enter code manually below.
+          </p>
+
+          <div className="mt-6 flex gap-2">
+            <input
+              type="text"
+              value={scannedCode}
+              onChange={(e) => setScannedCode(e.target.value)}
+              placeholder="Enter Barcode / SKU..."
+              className="flex-1 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              onClick={() => {
+                if (scannedCode) {
+                  setScannedProduct({ name: 'Box Strapping Roll 12mm', code: scannedCode, price: '₹1,450', stock: 142 });
+                }
+              }}
+              className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-500"
+            >
+              Verify
+            </button>
           </div>
 
-          <button
-            onClick={handlePunch}
-            disabled={punching || (!isWithinRadius && !isDemo)}
-            className={`w-full rounded-xl py-3.5 text-sm font-black tracking-wide shadow-lg transition disabled:opacity-50 ${
-              isPunchedIn
-                ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/25'
-                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/25'
-            }`}
-          >
-            {punching
-              ? 'Saving Punch...'
-              : isPunchedIn
-              ? 'PUNCH OUT (Duty End)'
-              : 'PUNCH IN (Duty Start)'}
-          </button>
-
-          {!isWithinRadius && distance !== null && !isDemo && (
-            <p className="mt-2 text-center text-[11px] text-amber-400">
-              Shop ke {shop.radius}m daayre mein aane par hi Punch button enable hoga.
-            </p>
+          {scannedProduct && (
+            <div className="mt-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-left">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Product Found</span>
+                <span className="text-xs font-mono text-slate-300">{scannedProduct.code}</span>
+              </div>
+              <h4 className="text-sm font-bold text-white">{scannedProduct.name}</h4>
+              <div className="mt-3 flex items-center justify-between text-xs">
+                <span className="text-slate-400">Price: <strong className="text-white">{scannedProduct.price}</strong></span>
+                <span className="text-slate-400">Available Stock: <strong className="text-emerald-400">{scannedProduct.stock} units</strong></span>
+              </div>
+            </div>
           )}
         </div>
       </div>
+    );
+  }
 
-      {/* Daily Work Log Section */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
-        <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-1.5">
-          <span>📝</span> Daily Work Log
-        </h2>
-        <p className="text-xs text-slate-400 mb-3">
-          Aaj ka kaam aur summary yahan likhein (Owner verification ke baad Star milega).
-        </p>
+  if (activeModule === 'sale') {
+    return (
+      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
+        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="text-base font-bold text-white">New Sale / Order Entry</h2>
+            <p className="text-xs text-slate-400">Create customer order & record entry</p>
+          </div>
+        </div>
 
-        <form onSubmit={handleSubmitWorkLog} className="space-y-3">
-          <textarea
-            rows={2}
-            value={logText}
-            onChange={(e) => setLogText(e.target.value)}
-            placeholder="Aaj kitna kaam kiya, kaunse orders dispatch huye, remarks..."
-            className="w-full rounded-xl border border-slate-700 bg-slate-800/80 p-3 text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500"
-            disabled={submittingLog}
-          />
+        {saleSuccess && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300 flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" />
+            <span>Sale order successfully recorded!</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSaleSubmit} className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
+          <div>
+            <label className="text-xs text-slate-400">Customer Name / Firm</label>
+            <input
+              type="text"
+              required
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              placeholder="Shree Ganesh Packaging"
+              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400">Item Details & Quantity</label>
+            <input
+              type="text"
+              required
+              value={itemDetails}
+              onChange={(e) => setItemDetails(e.target.value)}
+              placeholder="5 Rolls Blue Strapping, 2 Rolls Stretch Film"
+              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400">Total Amount (₹)</label>
+            <input
+              type="number"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="10500"
+              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={submittingSale}
+            className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {submittingSale ? 'Saving Order...' : 'Submit Sale Order'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  if (activeModule === 'worklog') {
+    return (
+      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
+        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="text-base font-bold text-white">Daily Work Log</h2>
+            <p className="text-xs text-slate-400">Submit today's task summary for review</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleWorkLogSubmit} className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
+          <div>
+            <label className="text-xs text-slate-400">Today's Work Summary</label>
+            <textarea
+              rows={3}
+              required
+              value={logText}
+              onChange={(e) => setLogText(e.target.value)}
+              placeholder="Dispatched orders, verified inventory stock, godown cleaning..."
+              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+              disabled={submittingLog}
+            />
+          </div>
           <button
             type="submit"
             disabled={submittingLog || !logText.trim()}
-            className="w-full rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white shadow hover:bg-indigo-500 disabled:opacity-50"
+            className="w-full rounded-xl bg-indigo-600 py-3 text-xs font-bold text-white shadow hover:bg-indigo-500 disabled:opacity-50"
           >
             {submittingLog ? 'Submitting...' : 'Submit Work Log'}
           </button>
         </form>
 
-        {/* Recent Work Logs List */}
-        {workLogs.length > 0 && (
-          <div className="mt-4 space-y-2 border-t border-slate-800 pt-3">
-            <span className="text-[11px] font-semibold text-slate-400">Recent Logs</span>
-            {workLogs.slice(0, 3).map((log) => (
-              <div key={log.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5 text-xs">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-slate-400 font-mono text-[10px]">{log.date}</span>
+        <div className="space-y-3">
+          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Recent Submitted Logs</h3>
+          {workLogs.length === 0 ? (
+            <p className="text-xs text-slate-500">No work logs submitted yet.</p>
+          ) : (
+            workLogs.map((log) => (
+              <div key={log.id} className="rounded-xl border border-slate-800 bg-slate-900/90 p-3.5 text-xs">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-mono text-slate-400 text-[11px]">{log.date}</span>
                   <span
                     className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                       log.status === 'approved'
@@ -587,68 +478,236 @@ export default function Home({ profile }: HomeProps) {
                     {log.status.toUpperCase()}
                   </span>
                 </div>
-                <p className="text-slate-200 leading-relaxed text-xs">{log.text}</p>
+                <p className="text-slate-200 leading-relaxed">{log.text}</p>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Star History & Punches History */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Star History */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
-          <h3 className="text-xs font-bold text-amber-400 mb-2 flex items-center gap-1.5">
-            <span>⭐</span> Star Timeline
-          </h3>
-          {stars.length === 0 ? (
-            <p className="text-[11px] text-slate-500">Abhi koi star events nahi hain.</p>
-          ) : (
-            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-              {stars.map((st) => (
-                <div key={st.id} className="flex items-center justify-between rounded-lg bg-slate-950/60 p-2 text-xs">
-                  <div>
-                    <span className="font-semibold text-slate-300">{st.note || st.type}</span>
-                    <span className="block text-[10px] text-slate-500 font-mono">
-                      {new Date(st.at).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <span className={`font-black ${st.delta >= 0 ? 'text-amber-400' : 'text-red-400'}`}>
-                    {st.delta >= 0 ? `+${st.delta}` : st.delta} ★
-                  </span>
-                </div>
-              ))}
-            </div>
+            ))
           )}
         </div>
+      </div>
+    );
+  }
 
-        {/* Punch History */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
-          <h3 className="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5">
-            <span>⏱️</span> Recent Punches
-          </h3>
+  if (activeModule === 'attendance') {
+    return (
+      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
+        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="text-base font-bold text-white">Duty & Attendance History</h2>
+            <p className="text-xs text-slate-400">Punch logs and attendance records</p>
+          </div>
+        </div>
+
+        <div className="space-y-2.5">
           {punches.length === 0 ? (
-            <p className="text-[11px] text-slate-500">Abhi koi punches record nahi hain.</p>
+            <p className="text-xs text-slate-500">No attendance punches recorded yet.</p>
           ) : (
-            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-              {punches.slice(0, 5).map((p) => (
-                <div key={p.id} className="flex items-center justify-between rounded-lg bg-slate-950/60 p-2 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-2 w-2 rounded-full ${p.type === 'in' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                    <span className="font-semibold text-slate-200">
-                      {p.type === 'in' ? 'Punch In' : 'Punch Out'}
-                    </span>
+            punches.map((p) => (
+              <div key={p.id} className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-full font-bold text-white ${p.type === 'in' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+                    {p.type === 'in' ? 'IN' : 'OUT'}
                   </div>
-                  <div className="text-right">
-                    <span className="text-[11px] text-slate-300 font-mono">
-                      {new Date(p.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <span className="block text-[10px] text-slate-500">{p.dist}m away</span>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">{p.type === 'in' ? 'Punch In (Duty Start)' : 'Punch Out (Duty End)'}</h4>
+                    <p className="text-xs text-slate-400 font-mono mt-0.5">{new Date(p.at).toLocaleString()}</p>
                   </div>
                 </div>
-              ))}
-            </div>
+                <span className="text-xs font-mono text-slate-400 bg-slate-800 px-2 py-1 rounded-lg">
+                  {p.dist}m dist
+                </span>
+              </div>
+            ))
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (activeModule === 'profile') {
+    return (
+      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
+        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="text-base font-bold text-white">Staff Profile & Help</h2>
+            <p className="text-xs text-slate-400">Account details and settings</p>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-6 shadow-2xl space-y-4">
+          <div className="flex items-center gap-4 border-b border-slate-800 pb-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/25 text-indigo-400 text-2xl font-black">
+              {profile.name.charAt(0)}
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-white">{profile.name}</h3>
+              <p className="text-xs text-indigo-400 capitalize font-semibold">{profile.role} • {profile.city}</p>
+            </div>
+          </div>
+
+          <div className="space-y-3 text-xs">
+            <div className="flex justify-between py-1 border-b border-slate-800/60">
+              <span className="text-slate-400">Mobile Number</span>
+              <span className="font-mono text-white">{profile.mobile}</span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-slate-800/60">
+              <span className="text-slate-400">Account Status</span>
+              <span className="font-bold text-emerald-400 uppercase">{profile.status}</span>
+            </div>
+            <div className="flex justify-between py-1">
+              <span className="text-slate-400">Total Stars Earned</span>
+              <span className="font-black text-amber-400">★ {totalStars} Points</span>
+            </div>
+          </div>
+
+          <button
+            onClick={handleLogout}
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-rose-600/20 border border-rose-500/30 py-3 text-xs font-bold text-rose-400 hover:bg-rose-600/30"
+          >
+            <LogOut className="h-4 w-4" />
+            Logout from Shivam Staff
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Main Home Grid View
+  return (
+    <div className="space-y-5 p-4 text-slate-100 max-w-lg mx-auto">
+      {/* Top Header & Duty Status Section */}
+      <div className="rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 p-5 shadow-2xl">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-lg font-black text-white tracking-wide">{profile.name}</h1>
+            <p className="text-xs text-indigo-400 capitalize font-semibold mt-0.5">{profile.role} • {profile.city}</p>
+          </div>
+          <div className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5">
+            <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+            <span className="text-sm font-black text-amber-400">{totalStars}</span>
+          </div>
+        </div>
+
+        {/* Duty Toggle Button */}
+        <div className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+          <div>
+            <span className="text-xs text-slate-400 block">Duty Status</span>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`inline-block h-3 w-3 rounded-full ${isOnDuty ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+              <span className="text-sm font-bold text-white">
+                {isOnDuty ? 'ON DUTY' : 'OFF DUTY'}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={toggleDuty}
+            disabled={attendanceLoading}
+            className={`rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-wider shadow-lg transition ${
+              isOnDuty
+                ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/25'
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/25'
+            }`}
+          >
+            {attendanceLoading ? 'Updating...' : isOnDuty ? 'Punch Out' : 'Punch In'}
+          </button>
+        </div>
+      </div>
+
+      {/* Main Action Grid (2-Column Module Cards) */}
+      <div>
+        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 px-1">
+          Staff App Modules
+        </h2>
+
+        <div className="grid grid-cols-2 gap-3.5">
+          {/* Stock & Inventory */}
+          <button
+            onClick={() => setActiveModule('stock')}
+            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
+          >
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600/15 text-indigo-400 group-hover:scale-110 transition">
+              <Package className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-bold text-white">Stock & Inventory</h3>
+            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
+              Search godown items & stock levels.
+            </p>
+          </button>
+
+          {/* Barcode Scanner */}
+          <button
+            onClick={() => setActiveModule('scanner')}
+            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
+          >
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-600/15 text-emerald-400 group-hover:scale-110 transition">
+              <Scan className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-bold text-white">Barcode Scanner</h3>
+            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
+              Verify product & check prices instantly.
+            </p>
+          </button>
+
+          {/* New Sale / Order */}
+          <button
+            onClick={() => setActiveModule('sale')}
+            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
+          >
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-amber-600/15 text-amber-400 group-hover:scale-110 transition">
+              <ShoppingCart className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-bold text-white">New Sale / Order</h3>
+            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
+              Record customer sales & orders.
+            </p>
+          </button>
+
+          {/* Daily Work Log */}
+          <button
+            onClick={() => setActiveModule('worklog')}
+            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
+          >
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-purple-600/15 text-purple-400 group-hover:scale-110 transition">
+              <ClipboardList className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-bold text-white">Daily Work Log</h3>
+            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
+              Submit today's task summary for review.
+            </p>
+          </button>
+
+          {/* Duty & Attendance History */}
+          <button
+            onClick={() => setActiveModule('attendance')}
+            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
+          >
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600/15 text-blue-400 group-hover:scale-110 transition">
+              <CalendarClock className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-bold text-white">Attendance Log</h3>
+            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
+              View punch times & history logs.
+            </p>
+          </button>
+
+          {/* Profile & Help */}
+          <button
+            onClick={() => setActiveModule('profile')}
+            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
+          >
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-rose-600/15 text-rose-400 group-hover:scale-110 transition">
+              <User className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-bold text-white">Profile & Help</h3>
+            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
+              Staff details & account settings.
+            </p>
+          </button>
         </div>
       </div>
     </div>
