@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "shivam-staff-ff7d5"
+  },
+  "targets": {
+    "shivam-staff-ff7d5": {
+      "hosting": {
+        "shivam-staff-app": [
+          "shivam-staff-app"
+        ]
+      }
+    }
+  }
+}
