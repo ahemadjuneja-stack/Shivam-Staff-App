@@ -1,0 +1,8 @@
+{
+  "name": "Shivam Staff",
+  "description": "Mobile-first PWA for Shivam Staff management with Firebase Phone Auth, Firestore, and Hisab tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
