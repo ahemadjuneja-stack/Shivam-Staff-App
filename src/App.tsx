@@ -3,6 +3,7 @@ import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
 import HisabScreen from './screens/Hisab';
+import ShivamLogo from './components/ShivamLogo';
 
 export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(() => {
@@ -32,11 +33,14 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-4 py-3 backdrop-blur">
-        <div>
-          <h1 className="text-base font-black tracking-wider text-white">SHIVAM STAFF</h1>
-          <p className="text-xs text-indigo-400 capitalize">{profile.name} • {profile.role}</p>
+    <div className="flex min-h-screen flex-col bg-[#050914] text-slate-100">
+      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-4 py-2.5 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <ShivamLogo size="sm" />
+          <div className="border-l border-slate-800 pl-3">
+            <p className="text-xs font-bold text-white">{profile.name}</p>
+            <p className="text-[10px] text-indigo-400 capitalize">{profile.role}</p>
+          </div>
         </div>
         <button
           onClick={handleLogout}

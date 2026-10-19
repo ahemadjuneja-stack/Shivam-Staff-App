@@ -1,1 +1,34 @@
 @import "tailwindcss";
+
+@layer utilities {
+  @keyframes textShine {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+
+  .animate-text-shine {
+    background: linear-gradient(90deg, #1e293b 0%, #334155 30%, #ffffff 50%, #334155 70%, #1e293b 100%);
+    background-size: 200% auto;
+    color: transparent;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-stroke: 0.6px rgba(255, 255, 255, 0.7);
+    animation: textShine 2s linear infinite;
+    font-family: 'Aboreto', cursive, serif;
+    font-weight: 700;
+  }
+}
+
+body {
+  background: radial-gradient(circle at 50% 20%, #0d1b32 0%, #050914 70%, #020408 100%);
+  color: #f1f5f9;
+  min-height: 100vh;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}

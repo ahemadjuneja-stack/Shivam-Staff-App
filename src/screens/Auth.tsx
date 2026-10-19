@@ -8,6 +8,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile } from '../types';
+import ShivamLogo from '../components/ShivamLogo';
 
 interface AuthScreenProps {
   onLoginSuccess: (profile: UserProfile) => void;
@@ -126,8 +127,11 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
 
   if (mode === 'pending') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
+      <div className="flex min-h-screen items-center justify-center bg-[#050914] p-4">
         <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-slate-900/95 p-8 text-center shadow-2xl backdrop-blur">
+          <div className="mb-6 flex justify-center">
+            <ShivamLogo size="md" subtitle="Staff Portal" />
+          </div>
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10 text-amber-400 text-3xl font-bold">
             ⏳
           </div>
@@ -153,13 +157,10 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-[#050914] p-4">
       <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-slate-900/90 p-7 shadow-2xl backdrop-blur">
-        <div className="mb-6 text-center">
-          <h1 className="text-2xl font-black tracking-wider text-white">SHIVAM STAFF</h1>
-          <p className="mt-1 text-xs font-semibold uppercase tracking-widest text-indigo-400">
-            {mode === 'register' ? 'Staff Registration' : 'Staff Login'}
-          </p>
+        <div className="mb-6 text-center flex flex-col items-center">
+          <ShivamLogo size="lg" subtitle="Staff & Sales Portal" />
         </div>
 
         {errorMsg && (
