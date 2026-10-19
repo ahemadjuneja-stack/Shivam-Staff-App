@@ -1,4 +1,4 @@
-name: Deploy Shivam Staff App to Firebase
+name: Deploy Web and Build APK
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  build_and_deploy:
+  build_web_and_deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -20,7 +20,7 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Build Project
+      - name: Build Web
         run: npm run build
 
       - name: Deploy to Firebase Hosting
@@ -31,3 +31,24 @@ jobs:
           channelId: live
           projectId: shivam-staff-ff7d5
           target: shivam-staff-app
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Build Android Debug APK
+        run: |
+          if [ -d "android" ]; then
+            cd android
+            chmod +x gradlew
+            ./gradlew assembleDebug
+          fi
+
+      - name: Upload APK Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shivam-Staff-App-Debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
