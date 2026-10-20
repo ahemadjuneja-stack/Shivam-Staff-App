@@ -7,7 +7,6 @@ import {
   onSnapshot,
   addDoc,
   doc,
-  getDoc,
   limit,
   setDoc,
   serverTimestamp
@@ -20,8 +19,6 @@ import {
   StarEvent
 } from '../types';
 import {
-  Package,
-  Scan,
   ShoppingCart,
   ClipboardList,
   CalendarClock,
@@ -29,19 +26,14 @@ import {
   ArrowLeft,
   Star,
   CheckCircle2,
-  Clock,
-  LogOut,
-  Sparkles,
-  Plus,
-  Search,
-  Check
+  LogOut
 } from 'lucide-react';
 
 interface HomeProps {
   profile: UserProfile;
 }
 
-type ActiveModule = 'home' | 'stock' | 'scanner' | 'sale' | 'worklog' | 'attendance' | 'profile';
+type ActiveModule = 'home' | 'sale' | 'worklog' | 'attendance' | 'profile';
 
 export default function Home({ profile }: HomeProps) {
   const [activeModule, setActiveModule] = useState<ActiveModule>('home');
@@ -61,14 +53,6 @@ export default function Home({ profile }: HomeProps) {
 
   // Punches history state
   const [punches, setPunches] = useState<PunchRecord[]>([]);
-
-  // Stock / Inventory state
-  const [stockQuery, setStockQuery] = useState('');
-  const [stockItems, setStockItems] = useState<any[]>([]);
-
-  // Barcode state
-  const [scannedCode, setScannedCode] = useState('');
-  const [scannedProduct, setScannedProduct] = useState<any | null>(null);
 
   // Sale / Order state
   const [customerName, setCustomerName] = useState('');
@@ -231,130 +215,6 @@ export default function Home({ profile }: HomeProps) {
     localStorage.removeItem('shivam_staff_logged_user');
     window.location.reload();
   };
-
-  // Render Module Sub-screens
-  if (activeModule === 'stock') {
-    return (
-      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
-          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div>
-            <h2 className="text-base font-bold text-white">Stock & Inventory</h2>
-            <p className="text-xs text-slate-400">Search godown items & current stock</p>
-          </div>
-        </div>
-
-        <div className="relative">
-          <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
-          <input
-            type="text"
-            value={stockQuery}
-            onChange={(e) => setStockQuery(e.target.value)}
-            placeholder="Search by product name or code..."
-            className="w-full rounded-xl border border-slate-700 bg-slate-900 py-3 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
-          />
-        </div>
-
-        <div className="space-y-2.5">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">Box Strapping Roll 12mm</h3>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">Code: SR-12-BLU</p>
-              </div>
-              <span className="rounded-xl bg-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-400 border border-emerald-500/30">
-                142 Rolls
-              </span>
-            </div>
-          </div>
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">Stretch Film Transparent 500mm</h3>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">Code: SF-500-TR</p>
-              </div>
-              <span className="rounded-xl bg-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-400 border border-emerald-500/30">
-                88 Boxes
-              </span>
-            </div>
-          </div>
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">PP Twine Sutli 2kg</h3>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">Code: SUT-2KG</p>
-              </div>
-              <span className="rounded-xl bg-amber-500/20 px-3 py-1 text-xs font-bold text-amber-400 border border-amber-500/30">
-                24 Bundles
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (activeModule === 'scanner') {
-    return (
-      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
-          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div>
-            <h2 className="text-base font-bold text-white">Barcode Scanner</h2>
-            <p className="text-xs text-slate-400">Scan product barcode for verification & price</p>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-8 text-center shadow-2xl">
-          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-indigo-600/10 text-indigo-400 text-3xl">
-            <Scan className="h-10 w-10 animate-pulse" />
-          </div>
-          <h3 className="text-base font-bold text-white">Camera Scanner Ready</h3>
-          <p className="mt-2 text-xs text-slate-400">
-            Align barcode inside camera view or enter code manually below.
-          </p>
-
-          <div className="mt-6 flex gap-2">
-            <input
-              type="text"
-              value={scannedCode}
-              onChange={(e) => setScannedCode(e.target.value)}
-              placeholder="Enter Barcode / SKU..."
-              className="flex-1 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            />
-            <button
-              onClick={() => {
-                if (scannedCode) {
-                  setScannedProduct({ name: 'Box Strapping Roll 12mm', code: scannedCode, price: '₹1,450', stock: 142 });
-                }
-              }}
-              className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-500"
-            >
-              Verify
-            </button>
-          </div>
-
-          {scannedProduct && (
-            <div className="mt-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-left">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Product Found</span>
-                <span className="text-xs font-mono text-slate-300">{scannedProduct.code}</span>
-              </div>
-              <h4 className="text-sm font-bold text-white">{scannedProduct.name}</h4>
-              <div className="mt-3 flex items-center justify-between text-xs">
-                <span className="text-slate-400">Price: <strong className="text-white">{scannedProduct.price}</strong></span>
-                <span className="text-slate-400">Available Stock: <strong className="text-emerald-400">{scannedProduct.stock} units</strong></span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   if (activeModule === 'sale') {
     return (
@@ -577,7 +437,7 @@ export default function Home({ profile }: HomeProps) {
     );
   }
 
-  // Main Home Grid View
+  // Main Home Grid View (Clean remaining modules)
   return (
     <div className="space-y-5 p-4 text-slate-100 max-w-lg mx-auto">
       {/* Top Header & Duty Status Section */}
@@ -618,41 +478,13 @@ export default function Home({ profile }: HomeProps) {
         </div>
       </div>
 
-      {/* Main Action Grid (2-Column Module Cards) */}
+      {/* Main Action Grid (Remaining Module Cards) */}
       <div>
         <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 px-1">
           Staff App Modules
         </h2>
 
         <div className="grid grid-cols-2 gap-3.5">
-          {/* Stock & Inventory */}
-          <button
-            onClick={() => setActiveModule('stock')}
-            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
-          >
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600/15 text-indigo-400 group-hover:scale-110 transition">
-              <Package className="h-6 w-6" />
-            </div>
-            <h3 className="text-sm font-bold text-white">Stock & Inventory</h3>
-            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
-              Search godown items & stock levels.
-            </p>
-          </button>
-
-          {/* Barcode Scanner */}
-          <button
-            onClick={() => setActiveModule('scanner')}
-            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
-          >
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-600/15 text-emerald-400 group-hover:scale-110 transition">
-              <Scan className="h-6 w-6" />
-            </div>
-            <h3 className="text-sm font-bold text-white">Barcode Scanner</h3>
-            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
-              Verify product & check prices instantly.
-            </p>
-          </button>
-
           {/* New Sale / Order */}
           <button
             onClick={() => setActiveModule('sale')}
