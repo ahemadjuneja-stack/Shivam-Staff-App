@@ -34,20 +34,21 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-[#050914] text-slate-100">
-      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-4 py-2.5 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <ShivamLogo size="sm" />
-          <div className="border-l border-slate-800 pl-3">
-            <p className="text-xs font-bold text-white">{profile.name}</p>
-            <p className="text-[10px] text-indigo-400 capitalize">{profile.role}</p>
-          </div>
+      <header className="sticky top-0 z-40 grid grid-cols-3 items-center border-b border-slate-800 bg-slate-900/90 px-4 py-2.5 backdrop-blur">
+        <div className="flex items-center">
+          <span className="text-xs font-semibold text-slate-300 truncate">{profile.name}</span>
         </div>
-        <button
-          onClick={handleLogout}
-          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white"
-        >
-          Logout
-        </button>
+        <div className="flex justify-center">
+          <ShivamLogo size="sm" />
+        </div>
+        <div className="flex justify-end">
+          <button
+            onClick={handleLogout}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white"
+          >
+            Logout
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 pb-20">

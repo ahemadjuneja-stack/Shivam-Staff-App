@@ -3,11 +3,9 @@ import {
   collection,
   query,
   where,
-  orderBy,
   onSnapshot,
   addDoc,
   doc,
-  limit,
   setDoc,
   serverTimestamp
 } from 'firebase/firestore';
@@ -19,21 +17,20 @@ import {
   StarEvent
 } from '../types';
 import {
-  ShoppingCart,
   ClipboardList,
   CalendarClock,
   User,
   ArrowLeft,
   Star,
-  CheckCircle2,
   LogOut
 } from 'lucide-react';
+import ShivamLogo from '../components/ShivamLogo';
 
 interface HomeProps {
   profile: UserProfile;
 }
 
-type ActiveModule = 'home' | 'sale' | 'worklog' | 'attendance' | 'profile';
+type ActiveModule = 'home' | 'worklog' | 'attendance' | 'profile';
 
 export default function Home({ profile }: HomeProps) {
   const [activeModule, setActiveModule] = useState<ActiveModule>('home');
@@ -54,13 +51,6 @@ export default function Home({ profile }: HomeProps) {
   // Punches history state
   const [punches, setPunches] = useState<PunchRecord[]>([]);
 
-  // Sale / Order state
-  const [customerName, setCustomerName] = useState('');
-  const [itemDetails, setItemDetails] = useState('');
-  const [amount, setAmount] = useState('');
-  const [submittingSale, setSubmittingSale] = useState(false);
-  const [saleSuccess, setSaleSuccess] = useState(false);
-
   // Fetch current duty status
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'staff_attendance', profile.uid), (docSnap) => {
@@ -75,15 +65,13 @@ export default function Home({ profile }: HomeProps) {
   useEffect(() => {
     const q = query(
       collection(db, 'stars'),
-      where('uid', '==', profile.uid),
-      orderBy('at', 'desc'),
-      limit(20)
+      where('uid', '==', profile.uid)
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const records = snapshot.docs.map((d) => ({
         id: d.id,
         ...(d.data() as Omit<StarEvent, 'id'>)
-      }));
+      })).sort((a, b) => b.at - a.at);
       setStars(records);
       const total = records.reduce((sum, item) => sum + (item.delta || 0), 0);
       setTotalStars(total);
@@ -95,15 +83,13 @@ export default function Home({ profile }: HomeProps) {
   useEffect(() => {
     const q = query(
       collection(db, 'worklogs'),
-      where('uid', '==', profile.uid),
-      orderBy('at', 'desc'),
-      limit(20)
+      where('uid', '==', profile.uid)
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const logs = snapshot.docs.map((d) => ({
         id: d.id,
         ...(d.data() as Omit<WorkLog, 'id'>)
-      }));
+      })).sort((a, b) => b.at - a.at);
       setWorkLogs(logs);
     });
     return () => unsub();
@@ -113,15 +99,13 @@ export default function Home({ profile }: HomeProps) {
   useEffect(() => {
     const q = query(
       collection(db, 'punches'),
-      where('uid', '==', profile.uid),
-      orderBy('at', 'desc'),
-      limit(20)
+      where('uid', '==', profile.uid)
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const records = snapshot.docs.map((d) => ({
         id: d.id,
         ...(d.data() as Omit<PunchRecord, 'id'>)
-      }));
+      })).sort((a, b) => b.at - a.at);
       setPunches(records);
     });
     return () => unsub();
@@ -182,117 +166,24 @@ export default function Home({ profile }: HomeProps) {
     }
   };
 
-  // Submit Sale Order
-  const handleSaleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customerName.trim() || !amount) return;
-    try {
-      setSubmittingSale(true);
-      await addDoc(collection(db, 'ledger_entries'), {
-        kind: 'jama',
-        cname: customerName.trim(),
-        amount: parseFloat(amount) || 0,
-        mode: 2, // UPI/Cash
-        note: itemDetails.trim(),
-        byUid: profile.uid,
-        byName: profile.name,
-        at: Date.now(),
-        miracle: false
-      });
-      setSaleSuccess(true);
-      setCustomerName('');
-      setItemDetails('');
-      setAmount('');
-      setTimeout(() => setSaleSuccess(false), 3000);
-    } catch (err: any) {
-      alert('Failed to save sale order: ' + err.message);
-    } finally {
-      setSubmittingSale(false);
-    }
-  };
-
   const handleLogout = () => {
     localStorage.removeItem('shivam_staff_logged_user');
     window.location.reload();
   };
 
-  if (activeModule === 'sale') {
-    return (
-      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
-          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div>
-            <h2 className="text-base font-bold text-white">New Sale / Order Entry</h2>
-            <p className="text-xs text-slate-400">Create customer order & record entry</p>
-          </div>
-        </div>
-
-        {saleSuccess && (
-          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300 flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4" />
-            <span>Sale order successfully recorded!</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSaleSubmit} className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
-          <div>
-            <label className="text-xs text-slate-400">Customer Name / Firm</label>
-            <input
-              type="text"
-              required
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              placeholder="Shree Ganesh Packaging"
-              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400">Item Details & Quantity</label>
-            <input
-              type="text"
-              required
-              value={itemDetails}
-              onChange={(e) => setItemDetails(e.target.value)}
-              placeholder="5 Rolls Blue Strapping, 2 Rolls Stretch Film"
-              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400">Total Amount (₹)</label>
-            <input
-              type="number"
-              required
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="10500"
-              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={submittingSale}
-            className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {submittingSale ? 'Saving Order...' : 'Submit Sale Order'}
-          </button>
-        </form>
-      </div>
-    );
-  }
-
   if (activeModule === 'worklog') {
     return (
       <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
-          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
-            <ArrowLeft className="h-5 w-5" />
-          </button>
+        <div className="grid grid-cols-3 items-center border-b border-slate-800 pb-3">
           <div>
-            <h2 className="text-base font-bold text-white">Daily Work Log</h2>
-            <p className="text-xs text-slate-400">Submit today's task summary for review</p>
+            <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300 hover:bg-slate-700 flex items-center gap-1.5 text-xs font-semibold">
+              <ArrowLeft className="h-4 w-4" /> Back
+            </button>
           </div>
+          <div className="flex justify-center">
+            <ShivamLogo size="sm" />
+          </div>
+          <div />
         </div>
 
         <form onSubmit={handleWorkLogSubmit} className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
@@ -350,14 +241,16 @@ export default function Home({ profile }: HomeProps) {
   if (activeModule === 'attendance') {
     return (
       <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
-          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
-            <ArrowLeft className="h-5 w-5" />
-          </button>
+        <div className="grid grid-cols-3 items-center border-b border-slate-800 pb-3">
           <div>
-            <h2 className="text-base font-bold text-white">Duty & Attendance History</h2>
-            <p className="text-xs text-slate-400">Punch logs and attendance records</p>
+            <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300 hover:bg-slate-700 flex items-center gap-1.5 text-xs font-semibold">
+              <ArrowLeft className="h-4 w-4" /> Back
+            </button>
           </div>
+          <div className="flex justify-center">
+            <ShivamLogo size="sm" />
+          </div>
+          <div />
         </div>
 
         <div className="space-y-2.5">
@@ -389,14 +282,16 @@ export default function Home({ profile }: HomeProps) {
   if (activeModule === 'profile') {
     return (
       <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
-          <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 p-2 text-slate-300 hover:bg-slate-700">
-            <ArrowLeft className="h-5 w-5" />
-          </button>
+        <div className="grid grid-cols-3 items-center border-b border-slate-800 pb-3">
           <div>
-            <h2 className="text-base font-bold text-white">Staff Profile & Help</h2>
-            <p className="text-xs text-slate-400">Account details and settings</p>
+            <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300 hover:bg-slate-700 flex items-center gap-1.5 text-xs font-semibold">
+              <ArrowLeft className="h-4 w-4" /> Back
+            </button>
           </div>
+          <div className="flex justify-center">
+            <ShivamLogo size="sm" />
+          </div>
+          <div />
         </div>
 
         <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-6 shadow-2xl space-y-4">
@@ -485,20 +380,6 @@ export default function Home({ profile }: HomeProps) {
         </h2>
 
         <div className="grid grid-cols-2 gap-3.5">
-          {/* New Sale / Order */}
-          <button
-            onClick={() => setActiveModule('sale')}
-            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
-          >
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-amber-600/15 text-amber-400 group-hover:scale-110 transition">
-              <ShoppingCart className="h-6 w-6" />
-            </div>
-            <h3 className="text-sm font-bold text-white">New Sale / Order</h3>
-            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
-              Record customer sales & orders.
-            </p>
-          </button>
-
           {/* Daily Work Log */}
           <button
             onClick={() => setActiveModule('worklog')}
