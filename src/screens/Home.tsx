@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   collection,
   query,
@@ -20,21 +20,17 @@ import {
   ClipboardList,
   CalendarClock,
   User,
-  ArrowLeft,
   Star,
   LogOut
 } from 'lucide-react';
-import ShivamLogo from '../components/ShivamLogo';
 
 interface HomeProps {
   profile: UserProfile;
+  activeModule: 'home' | 'worklog' | 'attendance' | 'profile';
+  setActiveModule: (m: 'home' | 'worklog' | 'attendance' | 'profile') => void;
 }
 
-type ActiveModule = 'home' | 'worklog' | 'attendance' | 'profile';
-
-export default function Home({ profile }: HomeProps) {
-  const [activeModule, setActiveModule] = useState<ActiveModule>('home');
-
+export default function Home({ profile, activeModule, setActiveModule }: HomeProps) {
   // Duty / Attendance state
   const [isOnDuty, setIsOnDuty] = useState<boolean>(false);
   const [attendanceLoading, setAttendanceLoading] = useState<boolean>(false);
@@ -174,19 +170,7 @@ export default function Home({ profile }: HomeProps) {
   if (activeModule === 'worklog') {
     return (
       <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="grid grid-cols-3 items-center border-b border-slate-800 pb-3">
-          <div>
-            <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300 hover:bg-slate-700 flex items-center gap-1.5 text-xs font-semibold">
-              <ArrowLeft className="h-4 w-4" /> Back
-            </button>
-          </div>
-          <div className="flex justify-center">
-            <ShivamLogo size="sm" />
-          </div>
-          <div />
-        </div>
-
-        <form onSubmit={handleWorkLogSubmit} className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
+        <form onSubmit={handleWorkLogSubmit} className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl mt-2">
           <div>
             <label className="text-xs text-slate-400">Today's Work Summary</label>
             <textarea
@@ -241,19 +225,7 @@ export default function Home({ profile }: HomeProps) {
   if (activeModule === 'attendance') {
     return (
       <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="grid grid-cols-3 items-center border-b border-slate-800 pb-3">
-          <div>
-            <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300 hover:bg-slate-700 flex items-center gap-1.5 text-xs font-semibold">
-              <ArrowLeft className="h-4 w-4" /> Back
-            </button>
-          </div>
-          <div className="flex justify-center">
-            <ShivamLogo size="sm" />
-          </div>
-          <div />
-        </div>
-
-        <div className="space-y-2.5">
+        <div className="space-y-2.5 mt-2">
           {punches.length === 0 ? (
             <p className="text-xs text-slate-500">No attendance punches recorded yet.</p>
           ) : (
@@ -282,19 +254,7 @@ export default function Home({ profile }: HomeProps) {
   if (activeModule === 'profile') {
     return (
       <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="grid grid-cols-3 items-center border-b border-slate-800 pb-3">
-          <div>
-            <button onClick={() => setActiveModule('home')} className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300 hover:bg-slate-700 flex items-center gap-1.5 text-xs font-semibold">
-              <ArrowLeft className="h-4 w-4" /> Back
-            </button>
-          </div>
-          <div className="flex justify-center">
-            <ShivamLogo size="sm" />
-          </div>
-          <div />
-        </div>
-
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-6 shadow-2xl space-y-4">
+        <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-6 shadow-2xl space-y-4 mt-2">
           <div className="flex items-center gap-4 border-b border-slate-800 pb-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/25 text-indigo-400 text-2xl font-black">
               {profile.name.charAt(0)}

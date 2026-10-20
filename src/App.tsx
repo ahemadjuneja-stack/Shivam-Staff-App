@@ -15,6 +15,7 @@ export default function App() {
     }
   });
   const [currentTab, setCurrentTab] = useState<'duty' | 'hisab'>('duty');
+  const [activeModule, setActiveModule] = useState<'home' | 'worklog' | 'attendance' | 'profile'>('home');
 
   const handleLogout = () => {
     localStorage.removeItem('shivam_staff_logged_user');
@@ -36,7 +37,16 @@ export default function App() {
     <div className="flex min-h-screen flex-col bg-[#050914] text-slate-100">
       <header className="sticky top-0 z-40 grid grid-cols-3 items-center border-b border-slate-800 bg-slate-900/90 px-4 py-2.5 backdrop-blur">
         <div className="flex items-center">
-          <span className="text-xs font-semibold text-slate-300 truncate">{profile.name}</span>
+          {activeModule !== 'home' ? (
+            <button
+              onClick={() => setActiveModule('home')}
+              className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-1.5 shadow"
+            >
+              ← Back
+            </button>
+          ) : (
+            <span className="text-xs font-semibold text-slate-300 truncate">{profile.name}</span>
+          )}
         </div>
         <div className="flex justify-center">
           <ShivamLogo size="sm" />
@@ -52,12 +62,19 @@ export default function App() {
       </header>
 
       <main className="flex-1 pb-20">
-        {currentTab === 'duty' ? <HomeScreen profile={profile} /> : <HisabScreen profile={profile} />}
+        {currentTab === 'duty' ? (
+          <HomeScreen profile={profile} activeModule={activeModule} setActiveModule={setActiveModule} />
+        ) : (
+          <HisabScreen profile={profile} />
+        )}
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-slate-800 bg-slate-900/95 backdrop-blur">
         <button
-          onClick={() => setCurrentTab('duty')}
+          onClick={() => {
+            setCurrentTab('duty');
+            setActiveModule('home');
+          }}
           className={`flex flex-1 flex-col items-center py-2.5 text-xs font-semibold ${
             currentTab === 'duty' ? 'text-indigo-400 border-t-2 border-indigo-500' : 'text-slate-400'
           }`}
@@ -67,7 +84,10 @@ export default function App() {
         </button>
         {profile.role === 'sales' && (
           <button
-            onClick={() => setCurrentTab('hisab')}
+            onClick={() => {
+              setCurrentTab('hisab');
+              setActiveModule('home');
+            }}
             className={`flex flex-1 flex-col items-center py-2.5 text-xs font-semibold ${
               currentTab === 'hisab' ? 'text-indigo-400 border-t-2 border-indigo-500' : 'text-slate-400'
             }`}
