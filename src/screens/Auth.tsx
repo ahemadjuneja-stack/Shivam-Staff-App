@@ -137,7 +137,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
           </div>
           <h2 className="text-xl font-bold text-white">Pending Approval</h2>
           <p className="mt-3 text-sm leading-relaxed text-slate-400">
-            Aapka account admin approval ke liye pending hai.
+            Your account is pending admin approval.
           </p>
           <button
             onClick={() => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   collection,
   query,
@@ -16,28 +16,25 @@ import {
   WorkLog,
   StarEvent
 } from '../types';
-import {
-  ClipboardList,
-  CalendarClock,
-  User,
-  Star,
-  LogOut
-} from 'lucide-react';
+import HisabScreen from './Hisab';
 
 interface HomeProps {
   profile: UserProfile;
-  activeModule: 'home' | 'worklog' | 'attendance' | 'profile';
-  setActiveModule: (m: 'home' | 'worklog' | 'attendance' | 'profile') => void;
+  onLogout: () => void;
 }
 
-export default function Home({ profile, activeModule, setActiveModule }: HomeProps) {
+type SectionType = 'home' | 'attendance' | 'worklog' | 'sales' | 'profile';
+
+export default function Home({ profile, onLogout }: HomeProps) {
+  const [activeSection, setActiveSection] = useState<SectionType>('home');
+
   // Duty / Attendance state
   const [isOnDuty, setIsOnDuty] = useState<boolean>(false);
   const [attendanceLoading, setAttendanceLoading] = useState<boolean>(false);
 
   // Stars state
   const [totalStars, setTotalStars] = useState<number>(0);
-  const [stars, setStars] = useState<StarEvent[]>([]);
+  const [, setStars] = useState<StarEvent[]>([]);
 
   // Work Logs state
   const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
@@ -46,6 +43,14 @@ export default function Home({ profile, activeModule, setActiveModule }: HomePro
 
   // Punches history state
   const [punches, setPunches] = useState<PunchRecord[]>([]);
+
+  // Toast / notification notice for SOON modules
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setNotice(msg);
+    setTimeout(() => setNotice(null), 3000);
+  };
 
   // Fetch current duty status
   useEffect(() => {
@@ -119,7 +124,7 @@ export default function Home({ profile, activeModule, setActiveModule }: HomePro
         updatedAt: serverTimestamp()
       }, { merge: true });
 
-      // Also record punch
+      // Record punch
       const newPunch: PunchRecord = {
         uid: profile.uid,
         name: profile.name,
@@ -154,7 +159,7 @@ export default function Home({ profile, activeModule, setActiveModule }: HomePro
         at: Date.now()
       });
       setLogText('');
-      alert('Work log submitted successfully for owner review.');
+      alert('Work log submitted successfully for review.');
     } catch (err: any) {
       alert('Failed to submit work log: ' + err.message);
     } finally {
@@ -162,52 +167,136 @@ export default function Home({ profile, activeModule, setActiveModule }: HomePro
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('shivam_staff_logged_user');
-    window.location.reload();
-  };
+  // Greeting & Date Formatting
+  const currentHour = new Date().getHours();
+  const timeGreeting = currentHour < 12 ? 'Good Morning' : currentHour < 17 ? 'Good Afternoon' : 'Good Evening';
+  const firstName = profile.name.trim().split(' ')[0] || 'Staff';
+  const formattedDate = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'short'
+  });
 
-  if (activeModule === 'worklog') {
+  // Top Bar component for active section screens
+  const renderTopAppBar = (title: string) => (
+    <div className="flex items-center justify-between bg-[#0C1628] border border-[#1D2B47] rounded-[22px] px-4 py-3.5 mb-5 shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
+      <button
+        onClick={() => setActiveSection('home')}
+        className="flex items-center gap-1.5 text-sm font-bold text-[#F59300] hover:text-[#FBBF24] transition"
+      >
+        <span className="text-lg">←</span> Back
+      </button>
+      <h2 className="text-base font-bold text-white tracking-wide uppercase">{title}</h2>
+      <div className="w-12"></div>
+    </div>
+  );
+
+  // Render Attendance Screen
+  if (activeSection === 'attendance') {
     return (
-      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <form onSubmit={handleWorkLogSubmit} className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl mt-2">
+      <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+        {renderTopAppBar('Attendance')}
+
+        {/* Duty Punch Banner */}
+        <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 mb-5 shadow-[0_8px_24px_rgba(0,0,0,0.4)] flex items-center justify-between">
           <div>
-            <label className="text-xs text-slate-400">Today's Work Summary</label>
+            <span className="text-xs text-[#8A93A6] font-medium block">Current Duty Status</span>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`h-3 w-3 rounded-full ${isOnDuty ? 'bg-[#10B981] animate-pulse' : 'bg-[#64748B]'}`} />
+              <span className="text-sm font-bold text-white">
+                {isOnDuty ? 'ON DUTY' : 'OFF DUTY'}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={toggleDuty}
+            disabled={attendanceLoading}
+            className={`rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-wider shadow-lg transition active:scale-95 ${
+              isOnDuty
+                ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                : 'bg-[#10B981] hover:bg-emerald-400 text-slate-950 font-extrabold'
+            }`}
+          >
+            {attendanceLoading ? 'Updating...' : isOnDuty ? 'Punch Out' : 'Punch In'}
+          </button>
+        </div>
+
+        {/* Punch History */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-bold text-[#5B677D] uppercase tracking-[2.4px] px-1">Punch History</h3>
+          {punches.length === 0 ? (
+            <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-6 text-center text-xs text-[#8A93A6]">
+              No attendance punches recorded yet.
+            </div>
+          ) : (
+            punches.map((p) => (
+              <div key={p.id} className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-4 flex items-center justify-between shadow-[0_4px_16px_rgba(0,0,0,0.3)]">
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-full font-bold text-xs ${p.type === 'in' ? 'bg-[#10B981]/20 text-[#34D399] border border-[#10B981]/40' : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'}`}>
+                    {p.type === 'in' ? 'IN' : 'OUT'}
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">{p.type === 'in' ? 'Punch In (Start)' : 'Punch Out (End)'}</h4>
+                    <p className="text-[11px] text-[#8A93A6] font-mono mt-0.5">{new Date(p.at).toLocaleString()}</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-mono text-[#8A93A6] bg-[#121F36] px-2.5 py-1 rounded-lg border border-[#1D2B47]">
+                  {p.dist || 0}m dist
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Render Work Log Screen
+  if (activeSection === 'worklog') {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+        {renderTopAppBar('Work Log')}
+
+        <form onSubmit={handleWorkLogSubmit} className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 shadow-[0_8px_24px_rgba(0,0,0,0.4)] space-y-4 mb-6">
+          <div>
+            <label className="text-xs font-semibold text-[#8A93A6]">Today's Task Summary</label>
             <textarea
               rows={3}
               required
               value={logText}
               onChange={(e) => setLogText(e.target.value)}
-              placeholder="Dispatched orders, verified inventory stock, godown cleaning..."
-              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+              placeholder="e.g., Dispatched pending customer orders, verified inventory stock..."
+              className="mt-1.5 w-full rounded-xl border border-[#1D2B47] bg-[#050C18] p-3 text-xs text-white placeholder-slate-500 focus:border-[#F59300] focus:outline-none"
               disabled={submittingLog}
             />
           </div>
           <button
             type="submit"
             disabled={submittingLog || !logText.trim()}
-            className="w-full rounded-xl bg-indigo-600 py-3 text-xs font-bold text-white shadow hover:bg-indigo-500 disabled:opacity-50"
+            className="w-full rounded-xl bg-[#A855F7] py-3 text-xs font-bold text-white shadow-lg hover:bg-purple-500 disabled:opacity-50 transition active:scale-95"
           >
             {submittingLog ? 'Submitting...' : 'Submit Work Log'}
           </button>
         </form>
 
         <div className="space-y-3">
-          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Recent Submitted Logs</h3>
+          <h3 className="text-xs font-bold text-[#5B677D] uppercase tracking-[2.4px] px-1">Recent Submitted Logs</h3>
           {workLogs.length === 0 ? (
-            <p className="text-xs text-slate-500">No work logs submitted yet.</p>
+            <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-6 text-center text-xs text-[#8A93A6]">
+              No work logs submitted yet.
+            </div>
           ) : (
             workLogs.map((log) => (
-              <div key={log.id} className="rounded-xl border border-slate-800 bg-slate-900/90 p-3.5 text-xs">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-mono text-slate-400 text-[11px]">{log.date}</span>
+              <div key={log.id} className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-4 text-xs space-y-2 shadow-[0_4px_16px_rgba(0,0,0,0.3)]">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[#8A93A6] text-[11px]">{log.date}</span>
                   <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
                       log.status === 'approved'
-                        ? 'bg-emerald-500/20 text-emerald-400'
+                        ? 'bg-[#10B981]/20 text-[#34D399] border border-[#10B981]/30'
                         : log.status === 'rejected'
-                        ? 'bg-red-500/20 text-red-400'
-                        : 'bg-amber-500/20 text-amber-400'
+                        ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                        : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                     }`}
                   >
                     {log.status.toUpperCase()}
@@ -222,69 +311,52 @@ export default function Home({ profile, activeModule, setActiveModule }: HomePro
     );
   }
 
-  if (activeModule === 'attendance') {
+  // Render Sales Screen
+  if (activeSection === 'sales') {
     return (
-      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="space-y-2.5 mt-2">
-          {punches.length === 0 ? (
-            <p className="text-xs text-slate-500">No attendance punches recorded yet.</p>
-          ) : (
-            punches.map((p) => (
-              <div key={p.id} className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-full font-bold text-white ${p.type === 'in' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
-                    {p.type === 'in' ? 'IN' : 'OUT'}
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">{p.type === 'in' ? 'Punch In (Duty Start)' : 'Punch Out (Duty End)'}</h4>
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">{new Date(p.at).toLocaleString()}</p>
-                  </div>
-                </div>
-                <span className="text-xs font-mono text-slate-400 bg-slate-800 px-2 py-1 rounded-lg">
-                  {p.dist}m dist
-                </span>
-              </div>
-            ))
-          )}
-        </div>
+      <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+        {renderTopAppBar('Sales & Ledger')}
+        <HisabScreen profile={profile} />
       </div>
     );
   }
 
-  if (activeModule === 'profile') {
+  // Render Profile Screen
+  if (activeSection === 'profile') {
     return (
-      <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-6 shadow-2xl space-y-4 mt-2">
-          <div className="flex items-center gap-4 border-b border-slate-800 pb-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/25 text-indigo-400 text-2xl font-black">
-              {profile.name.charAt(0)}
+      <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+        {renderTopAppBar('Profile')}
+
+        <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.4)] space-y-5">
+          <div className="flex items-center gap-4 border-b border-[#1D2B47] pb-4">
+            <div className="h-14 w-14 rounded-full bg-[#0C1628] ring-2 ring-[#F59300] flex items-center justify-center font-black text-2xl text-[#FBBF24]">
+              {profile.name.charAt(0).toUpperCase()}
             </div>
             <div>
-              <h3 className="text-lg font-black text-white">{profile.name}</h3>
-              <p className="text-xs text-indigo-400 capitalize font-semibold">{profile.role} • {profile.city}</p>
+              <h3 className="text-lg font-bold text-white">{profile.name}</h3>
+              <p className="text-xs text-[#38BDF8] uppercase tracking-wider font-semibold">{profile.role} • {profile.city || 'Main'}</p>
             </div>
           </div>
 
           <div className="space-y-3 text-xs">
-            <div className="flex justify-between py-1 border-b border-slate-800/60">
-              <span className="text-slate-400">Mobile Number</span>
-              <span className="font-mono text-white">{profile.mobile}</span>
+            <div className="flex justify-between py-1 border-b border-[#1D2B47]/60">
+              <span className="text-[#8A93A6]">Mobile Number</span>
+              <span className="font-mono text-white font-medium">{profile.mobile}</span>
             </div>
-            <div className="flex justify-between py-1 border-b border-slate-800/60">
-              <span className="text-slate-400">Account Status</span>
-              <span className="font-bold text-emerald-400 uppercase">{profile.status}</span>
+            <div className="flex justify-between py-1 border-b border-[#1D2B47]/60">
+              <span className="text-[#8A93A6]">Account Status</span>
+              <span className="font-bold text-[#34D399] uppercase">{profile.status}</span>
             </div>
             <div className="flex justify-between py-1">
-              <span className="text-slate-400">Total Stars Earned</span>
-              <span className="font-black text-amber-400">★ {totalStars} Points</span>
+              <span className="text-[#8A93A6]">Total Stars Earned</span>
+              <span className="font-extrabold text-[#FBBF24]">★ {totalStars} Points</span>
             </div>
           </div>
 
           <button
-            onClick={handleLogout}
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-rose-600/20 border border-rose-500/30 py-3 text-xs font-bold text-rose-400 hover:bg-rose-600/30"
+            onClick={onLogout}
+            className="mt-4 w-full rounded-xl bg-rose-600/20 border border-rose-500/30 py-3 text-xs font-bold text-rose-400 hover:bg-rose-600/30 transition active:scale-95"
           >
-            <LogOut className="h-4 w-4" />
             Logout from Shivam Staff
           </button>
         </div>
@@ -292,96 +364,163 @@ export default function Home({ profile, activeModule, setActiveModule }: HomePro
     );
   }
 
-  // Main Home Grid View (Clean remaining modules)
+  // MAIN HOME SCREEN VIEW (Matches Mockup Spec Exactly)
   return (
-    <div className="space-y-5 p-4 text-slate-100 max-w-lg mx-auto">
-      {/* Top Header & Duty Status Section */}
-      <div className="rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 p-5 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-lg font-black text-white tracking-wide">{profile.name}</h1>
-            <p className="text-xs text-indigo-400 capitalize font-semibold mt-0.5">{profile.role} • {profile.city}</p>
+    <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+      {/* Toast Notice */}
+      {notice && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-[#1D2B47] border border-[#F59300]/40 text-white text-xs px-4 py-2.5 rounded-full shadow-2xl animate-fade-in">
+          {notice}
+        </div>
+      )}
+
+      {/* Header Row */}
+      <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.4)] flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          {/* Avatar circle: 44px, fill #0C1628, 2px ring in orange #F59300, first letter in amber #FBBF24 */}
+          <div className="h-[44px] w-[44px] rounded-full bg-[#0C1628] ring-2 ring-[#F59300] flex items-center justify-center font-extrabold text-xl text-[#FBBF24] shrink-0">
+            {profile.name.charAt(0).toUpperCase()}
           </div>
-          <div className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5">
-            <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-            <span className="text-sm font-black text-amber-400">{totalStars}</span>
+          <div>
+            <h2 className="text-white font-black uppercase text-base tracking-[2.5px] leading-tight">
+              SHIVAM STAFF
+            </h2>
+            <p className="text-[13px] text-[#8A93A6] font-medium leading-tight mt-0.5">
+              {profile.name}
+            </p>
           </div>
         </div>
 
-        {/* Duty Toggle Button */}
-        <div className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-          <div>
-            <span className="text-xs text-slate-400 block">Duty Status</span>
-            <div className="flex items-center gap-2 mt-1">
-              <span className={`inline-block h-3 w-3 rounded-full ${isOnDuty ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-              <span className="text-sm font-bold text-white">
-                {isOnDuty ? 'ON DUTY' : 'OFF DUTY'}
-              </span>
+        {/* Duty Chip */}
+        <div>
+          {isOnDuty ? (
+            <div className="bg-[#10B981]/10 border border-[#10B981]/30 text-[#34D399] px-3 py-1.5 rounded-full text-[11px] font-bold tracking-wider flex items-center gap-1.5 shadow">
+              <span className="h-2 w-2 rounded-full bg-[#10B981] animate-pulse" />
+              <span>ON DUTY</span>
             </div>
-          </div>
-          <button
-            onClick={toggleDuty}
-            disabled={attendanceLoading}
-            className={`rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-wider shadow-lg transition ${
-              isOnDuty
-                ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/25'
-                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/25'
-            }`}
-          >
-            {attendanceLoading ? 'Updating...' : isOnDuty ? 'Punch Out' : 'Punch In'}
-          </button>
+          ) : (
+            <div className="bg-[#64748B]/12 border border-transparent text-[#94A3B8] px-3 py-1.5 rounded-full text-[11px] font-bold tracking-wider flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-[#64748B]" />
+              <span>OFF DUTY</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Main Action Grid (Remaining Module Cards) */}
-      <div>
-        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 px-1">
-          Staff App Modules
-        </h2>
+      {/* Greeting & Date Section */}
+      <div className="px-1 mb-5">
+        <h1 className="text-xl font-extrabold text-white tracking-tight">
+          {timeGreeting}, <span className="text-white">{firstName}</span>
+        </h1>
+        <p className="text-sm text-[#8A93A6] font-medium mt-0.5">
+          {formattedDate}
+        </p>
+      </div>
 
-        <div className="grid grid-cols-2 gap-3.5">
-          {/* Daily Work Log */}
-          <button
-            onClick={() => setActiveModule('worklog')}
-            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
-          >
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-purple-600/15 text-purple-400 group-hover:scale-110 transition">
-              <ClipboardList className="h-6 w-6" />
-            </div>
-            <h3 className="text-sm font-bold text-white">Daily Work Log</h3>
-            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
-              Submit today's task summary for review.
-            </p>
-          </button>
+      {/* Menu Section Label */}
+      <div className="text-[12px] font-bold uppercase tracking-[2.4px] text-[#5B677D] mb-3 px-1">
+        MENU
+      </div>
 
-          {/* Duty & Attendance History */}
-          <button
-            onClick={() => setActiveModule('attendance')}
-            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
-          >
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600/15 text-blue-400 group-hover:scale-110 transition">
-              <CalendarClock className="h-6 w-6" />
-            </div>
-            <h3 className="text-sm font-bold text-white">Attendance Log</h3>
-            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
-              View punch times & history logs.
-            </p>
-          </button>
+      {/* 2-Column Icon Grid */}
+      <div className="grid grid-cols-2 gap-[14px]">
+        {/* 1. Attendance */}
+        <button
+          onClick={() => setActiveSection('attendance')}
+          className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
+        >
+          <div className="h-[62px] w-[62px] rounded-[19px] bg-[#F59300]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+            <svg className="w-[34px] h-[34px] text-[#F59300]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+          </div>
+          <span className="text-white text-[15px] font-semibold">Attendance</span>
+        </button>
 
-          {/* Profile & Help */}
-          <button
-            onClick={() => setActiveModule('profile')}
-            className="flex flex-col items-start rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-left transition hover:border-indigo-500/50 hover:bg-slate-850 shadow-xl group"
-          >
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-rose-600/15 text-rose-400 group-hover:scale-110 transition">
-              <User className="h-6 w-6" />
-            </div>
-            <h3 className="text-sm font-bold text-white">Profile & Help</h3>
-            <p className="mt-1 text-[11px] text-slate-400 leading-snug">
-              Staff details & account settings.
-            </p>
-          </button>
-        </div>
+        {/* 2. Work Log */}
+        <button
+          onClick={() => setActiveSection('worklog')}
+          className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
+        >
+          <div className="h-[62px] w-[62px] rounded-[19px] bg-[#A855F7]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+            <svg className="w-[34px] h-[34px] text-[#A855F7]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+              <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+              <path d="M9 12h6" />
+              <path d="M9 16h6" />
+            </svg>
+          </div>
+          <span className="text-white text-[15px] font-semibold">Work Log</span>
+        </button>
+
+        {/* 3. Sales */}
+        <button
+          onClick={() => setActiveSection('sales')}
+          className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
+        >
+          <div className="h-[62px] w-[62px] rounded-[19px] bg-[#F0B429]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+            <svg className="w-[34px] h-[34px] text-[#F0B429]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="20" x2="18" y2="10" />
+              <line x1="12" y1="20" x2="12" y2="4" />
+              <line x1="6" y1="20" x2="6" y2="14" />
+              <path d="M3 20h18" />
+              <polyline points="15 6 19 2 19 6" />
+              <line x1="11" y1="10" x2="19" y2="2" />
+            </svg>
+          </div>
+          <span className="text-white text-[15px] font-semibold">Sales</span>
+        </button>
+
+        {/* 4. Profile */}
+        <button
+          onClick={() => setActiveSection('profile')}
+          className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
+        >
+          <div className="h-[62px] w-[62px] rounded-[19px] bg-[#38BDF8]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+            <svg className="w-[34px] h-[34px] text-[#38BDF8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </div>
+          <span className="text-white text-[15px] font-semibold">Profile</span>
+        </button>
+
+        {/* 5. Hisab XL (SOON) */}
+        <button
+          onClick={() => showToast('Hisab XL module is coming soon!')}
+          className="relative bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] opacity-80 hover:opacity-100 transition active:scale-[0.98]"
+        >
+          <span className="absolute top-3 right-3 bg-[#1D2B47] border border-[#2A3F68] text-[#7C8AA5] text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+            SOON
+          </span>
+          <div className="h-[62px] w-[62px] rounded-[19px] bg-[#7C8AA5]/13 flex items-center justify-center mb-3">
+            <svg className="w-[34px] h-[34px] text-[#7C8AA5]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="4" y="2" width="16" height="20" rx="2" />
+              <line x1="8" y1="6" x2="16" y2="6" />
+              <line x1="16" y1="14" x2="16" y2="18" />
+              <path d="M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M8 18h.01M12 18h.01" />
+            </svg>
+          </div>
+          <span className="text-white text-[15px] font-semibold">Hisab XL</span>
+        </button>
+
+        {/* 6. Polls (SOON) */}
+        <button
+          onClick={() => showToast('Polls module is coming soon!')}
+          className="relative bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] opacity-80 hover:opacity-100 transition active:scale-[0.98]"
+        >
+          <span className="absolute top-3 right-3 bg-[#1D2B47] border border-[#2A3F68] text-[#7C8AA5] text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+            SOON
+          </span>
+          <div className="h-[62px] w-[62px] rounded-[19px] bg-[#7C8AA5]/13 flex items-center justify-center mb-3">
+            <svg className="w-[34px] h-[34px] text-[#7C8AA5]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          </div>
+          <span className="text-white text-[15px] font-semibold">Polls</span>
+        </button>
       </div>
     </div>
   );

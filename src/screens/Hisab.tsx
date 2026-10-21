@@ -232,13 +232,13 @@ export default function Hisab({ profile }: HisabProps) {
     e.preventDefault();
     const numericAmount = parseFloat(amount);
     if (!numericAmount || numericAmount <= 0) {
-      alert('Kripya sahi amount darj karein.');
+      alert('Please enter a valid amount.');
       return;
     }
 
     const selectedCust = customers.find((c) => c.id === targetCid);
     if (entryKind === 'jama' && !selectedCust) {
-      alert('Jama entry ke liye Customer select karna zaroori hai.');
+      alert('Please select a party for collection entry.');
       return;
     }
 
@@ -320,7 +320,7 @@ export default function Hisab({ profile }: HisabProps) {
       setNote('');
     } catch (err: any) {
       console.error('Entry save error:', err);
-      alert('Entry save karne mein dikkat: ' + err.message);
+      alert('Error saving entry: ' + err.message);
     } finally {
       setSavingEntry(false);
     }
@@ -330,7 +330,7 @@ export default function Hisab({ profile }: HisabProps) {
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCustName.trim() || !newCustCode.trim()) {
-      alert('Customer Name aur Code zaroori hain.');
+      alert('Customer Name and Code are required.');
       return;
     }
 
@@ -367,14 +367,14 @@ export default function Hisab({ profile }: HisabProps) {
       setNewCustName('');
       setNewCustOpening('');
     } catch (err: any) {
-      alert('Customer add karne mein error: ' + err.message);
+      alert('Error adding customer: ' + err.message);
     } finally {
       setSavingCustomer(false);
     }
   };
 
   return (
-    <div className="space-y-4 p-4 text-slate-100 max-w-lg mx-auto">
+    <div className="space-y-4 p-1 text-slate-100 max-w-lg mx-auto">
       {/* Demo status banner if applicable */}
       {isDemo && (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-300 flex items-center justify-between">
@@ -389,13 +389,13 @@ export default function Hisab({ profile }: HisabProps) {
       )}
 
       {/* Header Info Banner */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl flex items-center justify-between">
+      <div className="rounded-2xl border border-[#1D2B47] bg-[#0C1628] p-4 shadow-xl flex items-center justify-between">
         <div>
-          <span className="text-xs uppercase tracking-wider text-slate-400">Hisab &amp; Recovery</span>
+          <span className="text-xs uppercase tracking-wider text-[#8A93A6]">Hisab &amp; Recovery</span>
           <h2 className="text-base font-bold text-white flex items-center gap-1.5 mt-0.5">
             <span>💼</span> Sales Ledger
           </h2>
-          <p className="text-xs text-indigo-400 mt-0.5">
+          <p className="text-xs text-[#38BDF8] mt-0.5">
             {selectedSheet ? `${selectedSheet.city} (${selectedSheet.month})` : 'Sheet: General City'}
           </p>
         </div>
@@ -409,7 +409,7 @@ export default function Hisab({ profile }: HisabProps) {
             }}
             className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/20"
           >
-            - Kharcha
+            - Expense
           </button>
           <button
             onClick={() => {
@@ -417,22 +417,22 @@ export default function Hisab({ profile }: HisabProps) {
               setTargetCid(customers[0]?.id || '');
               setShowEntryModal(true);
             }}
-            className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-500"
+            className="rounded-xl bg-[#10B981] px-3 py-2 text-xs font-bold text-slate-950 shadow-lg hover:bg-emerald-400"
           >
-            + Jama
+            + Collection
           </button>
         </div>
       </div>
 
       {/* Customer Search & Management */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
+      <div className="rounded-2xl border border-[#1D2B47] bg-[#0C1628] p-4 shadow-xl">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs font-bold text-white uppercase tracking-wider">
             Party / Customer Accounts ({filteredCustomers.length})
           </h3>
           <button
             onClick={() => setShowAddCustomerModal(true)}
-            className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300"
+            className="text-[11px] font-bold text-[#38BDF8] hover:text-sky-300"
           >
             + Add New Party
           </button>
@@ -444,34 +444,34 @@ export default function Hisab({ profile }: HisabProps) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search party by name or code..."
-            className="w-full rounded-xl border border-slate-700 bg-slate-800/80 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500"
+            className="w-full rounded-xl border border-[#1D2B47] bg-[#050C18] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-[#F59300]"
           />
         </div>
 
         {/* Customer Cards List */}
         <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
           {filteredCustomers.length === 0 ? (
-            <div className="py-6 text-center text-xs text-slate-500">
-              Koi customer nahi mila. &quot;+ Add New Party&quot; se naya account banayein.
+            <div className="py-6 text-center text-xs text-[#8A93A6]">
+              No customers found. Click &quot;+ Add New Party&quot; to create one.
             </div>
           ) : (
             filteredCustomers.map((cust) => (
               <div
                 key={cust.id}
-                className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-3 hover:border-slate-700 transition"
+                className="flex items-center justify-between rounded-xl border border-[#1D2B47] bg-[#050C18] p-3 hover:border-slate-700 transition"
               >
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="font-mono text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300 font-bold">
+                    <span className="font-mono text-[10px] bg-[#121F36] px-1.5 py-0.5 rounded text-[#38BDF8] font-bold">
                       {cust.code}
                     </span>
                     <span className="font-bold text-xs text-white">{cust.name}</span>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-[11px]">
-                    <span className="text-slate-400">Balance:</span>
+                    <span className="text-[#8A93A6]">Balance:</span>
                     <span
                       className={`font-mono font-bold ${
-                        cust.balance > 0 ? 'text-amber-400' : 'text-emerald-400'
+                        cust.balance > 0 ? 'text-[#FBBF24]' : 'text-[#34D399]'
                       }`}
                     >
                       ₹{cust.balance.toLocaleString('en-IN')}
@@ -494,39 +494,39 @@ export default function Hisab({ profile }: HisabProps) {
       </div>
 
       {/* Recent Ledger Entries */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl">
-        <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+      <div className="rounded-2xl border border-[#1D2B47] bg-[#0C1628] p-4 shadow-xl">
+        <div className="flex items-center justify-between mb-3 border-b border-[#1D2B47] pb-2">
           <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-            Recent Entries (Today / This Shift)
+            Recent Entries (Today / Shift)
           </h3>
-          <span className="text-[10px] text-slate-400">Miracle Software Sync Status</span>
+          <span className="text-[10px] text-[#8A93A6]">Miracle Sync</span>
         </div>
 
         {entries.length === 0 ? (
-          <p className="text-xs text-slate-500 py-3 text-center">Abhi koi collection entry darj nahi hui hai.</p>
+          <p className="text-xs text-[#8A93A6] py-3 text-center">No collection entries recorded yet.</p>
         ) : (
           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
             {entries.map((entry) => (
               <div
                 key={entry.id}
-                className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-2.5 text-xs flex items-center justify-between"
+                className="rounded-xl border border-[#1D2B47] bg-[#050C18] p-2.5 text-xs flex items-center justify-between"
               >
                 <div>
                   <div className="flex items-center gap-2">
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
                         entry.kind === 'jama'
-                          ? 'bg-emerald-500/20 text-emerald-400'
+                          ? 'bg-[#10B981]/20 text-[#34D399]'
                           : 'bg-rose-500/20 text-rose-400'
                       }`}
                     >
-                      {entry.kind === 'jama' ? 'JAMA' : 'KHARCHA'}
+                      {entry.kind === 'jama' ? 'COLLECTION' : 'EXPENSE'}
                     </span>
                     <span className="font-semibold text-slate-200">
                       {entry.cname || entry.note || (entry.kind === 'kharcha' ? 'General Expense' : 'Payment')}
                     </span>
                   </div>
-                  <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">
+                  <div className="mt-1 flex items-center gap-2 text-[10px] text-[#8A93A6]">
                     <span>
                       Mode: {entry.mode === 1 ? 'Cash' : entry.mode === 2 ? 'UPI' : 'Cheque'}
                     </span>
@@ -544,7 +544,7 @@ export default function Hisab({ profile }: HisabProps) {
                 <div className="text-right">
                   <span
                     className={`block font-mono text-sm font-black ${
-                      entry.kind === 'jama' ? 'text-emerald-400' : 'text-rose-400'
+                      entry.kind === 'jama' ? 'text-[#34D399]' : 'text-rose-400'
                     }`}
                   >
                     {entry.kind === 'jama' ? '+' : '-'}₹{entry.amount.toLocaleString('en-IN')}
@@ -553,7 +553,7 @@ export default function Hisab({ profile }: HisabProps) {
                     className={`inline-block text-[9px] font-bold px-1.5 py-0.2 rounded mt-0.5 ${
                       entry.miracle
                         ? 'bg-blue-500/20 text-blue-400'
-                        : 'bg-slate-800 text-slate-400'
+                        : 'bg-[#121F36] text-[#8A93A6]'
                     }`}
                   >
                     {entry.miracle ? 'Miracle Synced' : 'Pending Miracle'}
@@ -565,13 +565,13 @@ export default function Hisab({ profile }: HisabProps) {
         )}
       </div>
 
-      {/* Entry Modal (Jama / Kharcha) */}
+      {/* Entry Modal (Collection / Expense) */}
       {showEntryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-[#1D2B47] bg-[#0C1628] p-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#1D2B47] pb-3 mb-4">
               <h3 className="text-sm font-bold text-white">
-                {entryKind === 'jama' ? '💰 Jama (Collection) Entry' : '💸 Kharcha (Expense) Entry'}
+                {entryKind === 'jama' ? '💰 Collection Entry' : '💸 Expense Entry'}
               </h3>
               <button
                 onClick={() => setShowEntryModal(false)}
