@@ -77,20 +77,13 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Attach APK and version info to web dist
+      - name: Write in-app update pointer (version.json only - NO APK on Hosting)
         run: |
           mkdir -p dist/app
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/app/latest.apk
-          printf '{"versionCode": %s, "url": "https://shivam-staff-app.web.app/app/latest.apk"}\n' "${{ github.run_number }}" > dist/app/version.json
-
-      - name: Deploy Web + APK to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
-          channelId: live
-          projectId: shivam-staff-ff7d5
-          target: shivam-staff-app
+          printf '{"versionCode": %s, "url": "https://github.com/%s/releases/latest/download/app-debug.apk"}\n' "${{ github.run_number }}" "${{ github.repository }}" > dist/app/version.json
+          echo "version.json written - APK is served by GitHub Releases (Spark plan forbids executables on Hosting)"
+          cat dist/app/version.json
+          ls -la dist/app/
 
       - name: Create GitHub Release with APK
         uses: softprops/action-gh-release@v2
@@ -103,3 +96,13 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy Web to Firebase Hosting (no APK in upload)
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        continue-on-error: true
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          channelId: live
+          projectId: shivam-staff-ff7d5
+          target: shivam-staff-app
