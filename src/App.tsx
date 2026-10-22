@@ -22,7 +22,7 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
-          const userDocRef = doc(db, 'staff_users', firebaseUser.uid);
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
           const userDocSnap = await getDoc(userDocRef);
 
           if (userDocSnap.exists()) {
@@ -31,11 +31,11 @@ export default function App() {
               const p: UserProfile = {
                 uid: firebaseUser.uid,
                 name: data.name || 'Staff',
-                mobile: data.phone || '',
+                mobile: data.phone || data.mobile || '',
                 city: data.city || 'Main',
-                role: data.role === 'sales' ? 'sales' : 'worker',
+                role: (data.role === 'sales' || data.role === 'salesman' || data.role === 'sales_manager') ? 'sales' : 'worker',
                 status: 'active',
-                createdAt: typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now()
+                createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
               };
               setProfile(p);
               localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
@@ -47,7 +47,7 @@ export default function App() {
             const email = firebaseUser.email || '';
             const phoneFromEmail = email.split('@')[0];
             if (phoneFromEmail) {
-              const q = query(collection(db, 'staff_users'), where('phone', '==', phoneFromEmail));
+              const q = query(collection(db, 'users'), where('phone', '==', phoneFromEmail));
               const snap = await getDocs(q);
               if (!snap.empty) {
                 const d = snap.docs[0].data();
@@ -55,11 +55,11 @@ export default function App() {
                   const p: UserProfile = {
                     uid: snap.docs[0].id,
                     name: d.name || 'Staff',
-                    mobile: d.phone || phoneFromEmail,
+                    mobile: d.phone || d.mobile || phoneFromEmail,
                     city: d.city || 'Main',
-                    role: d.role === 'sales' ? 'sales' : 'worker',
+                    role: (d.role === 'sales' || d.role === 'salesman' || d.role === 'sales_manager') ? 'sales' : 'worker',
                     status: 'active',
-                    createdAt: typeof d.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now()
+                    createdAt: typeof d.createdAt === 'number' ? d.createdAt : (typeof d.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now())
                   };
                   setProfile(p);
                   localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));

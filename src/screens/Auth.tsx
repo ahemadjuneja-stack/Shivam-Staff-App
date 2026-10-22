@@ -71,7 +71,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       await signInWithEmailAndPassword(auth, email, password);
 
       const q = query(
-        collection(db, 'staff_users'),
+        collection(db, 'users'),
         where('phone', '==', mobile.trim())
       );
       const querySnap = await getDocs(q);
@@ -98,12 +98,14 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
           const profile: UserProfile = {
             uid: userUid,
             name: userData.name || 'Staff',
-            mobile: userData.phone || mobile.trim(),
+            mobile: userData.phone || userData.mobile || mobile.trim(),
             city: userData.city || 'Main',
-            role: userData.role === 'sales' ? 'sales' : 'worker',
+            role: (userData.role === 'sales' || userData.role === 'salesman' || userData.role === 'sales_manager') ? 'sales' : 'worker',
             status: 'active',
             createdAt:
-              typeof userData.createdAt === 'string'
+              typeof userData.createdAt === 'number'
+                ? userData.createdAt
+                : typeof userData.createdAt === 'string'
                 ? new Date(userData.createdAt).getTime()
                 : Date.now()
           };
@@ -141,14 +143,15 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       const uid = cred.user.uid;
 
-      await setDoc(doc(db, 'staff_users', uid), {
+      await setDoc(doc(db, 'users', uid), {
         name: name.trim(),
         phone: mobile.trim(),
+        mobile: mobile.trim(),
         pin: pin.trim(),
         status: 'pending',
         role: 'none',
         allowedCategories: [],
-        createdAt: new Date().toISOString()
+        createdAt: Date.now()
       });
 
       setMode('pending');
