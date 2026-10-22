@@ -4,9 +4,14 @@ import {
   query,
   where,
   getDocs,
-  addDoc
+  setDoc,
+  doc
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from 'firebase/auth';
+import { db, auth } from '../firebase';
 import { UserProfile } from '../types';
 import ShivamLogo from '../components/ShivamLogo';
 
@@ -21,6 +26,28 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
   const [name, setName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
+  const getEmail = (phone: string) => `${phone.trim()}@shivamstaff.app`;
+  const getPassword = (p: string) => `sv${p.trim()}shivam`;
+
+  const friendlyError = (err: any) => {
+    const code = err?.code || '';
+    if (
+      code === 'auth/invalid-credential' ||
+      code === 'auth/wrong-password' ||
+      code === 'auth/user-not-found' ||
+      code === 'auth/invalid-email'
+    ) {
+      return 'Incorrect mobile number or PIN.';
+    }
+    if (code === 'auth/email-already-in-use') {
+      return 'This mobile number is already registered. Please login.';
+    }
+    if (code === 'auth/weak-password') {
+      return 'PIN is too weak.';
+    }
+    return err?.message || 'Authentication failed. Please try again.';
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -28,51 +55,66 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       setErrorMsg('Please enter mobile number and 4-digit PIN.');
       return;
     }
+    if (mobile.trim().length !== 10) {
+      setErrorMsg('Please enter a valid 10-digit mobile number.');
+      return;
+    }
+    if (pin.trim().length !== 4) {
+      setErrorMsg('PIN must be 4 digits.');
+      return;
+    }
+
     try {
+      const email = getEmail(mobile);
+      const password = getPassword(pin);
+
+      await signInWithEmailAndPassword(auth, email, password);
+
       const q = query(
         collection(db, 'staff_users'),
         where('phone', '==', mobile.trim())
       );
       const querySnap = await getDocs(q);
-      if (querySnap.empty) {
-        setErrorMsg('User not registered, please register first.');
-        return;
+
+      let userData: any = null;
+      let userUid = auth.currentUser?.uid || '';
+
+      if (!querySnap.empty) {
+        const userDoc = querySnap.docs[0];
+        userData = userDoc.data();
+        userUid = userDoc.id;
       }
 
-      const userDoc = querySnap.docs[0];
-      const data = userDoc.data();
-
-      if (data.pin !== pin.trim()) {
-        setErrorMsg('Incorrect PIN. Please try again.');
-        return;
+      if (userData) {
+        if (userData.status === 'pending') {
+          setMode('pending');
+          return;
+        }
+        if (userData.status === 'rejected') {
+          setErrorMsg('Your registration has been rejected by admin.');
+          return;
+        }
+        if (userData.status === 'active') {
+          const profile: UserProfile = {
+            uid: userUid,
+            name: userData.name || 'Staff',
+            mobile: userData.phone || mobile.trim(),
+            city: userData.city || 'Main',
+            role: userData.role === 'sales' ? 'sales' : 'worker',
+            status: 'active',
+            createdAt:
+              typeof userData.createdAt === 'string'
+                ? new Date(userData.createdAt).getTime()
+                : Date.now()
+          };
+          onLoginSuccess(profile);
+          return;
+        }
       }
 
-      if (data.status === 'pending') {
-        setMode('pending');
-        return;
-      }
-
-      if (data.status === 'rejected') {
-        setErrorMsg('Your registration has been rejected by admin.');
-        return;
-      }
-
-      if (data.status === 'active') {
-        const profile: UserProfile = {
-          uid: userDoc.id,
-          name: data.name || 'Staff',
-          mobile: data.phone,
-          city: data.city || 'Main',
-          role: data.role === 'sales' ? 'sales' : 'worker',
-          status: 'active',
-          createdAt: typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now()
-        };
-        onLoginSuccess(profile);
-      } else {
-        setMode('pending');
-      }
+      setMode('pending');
     } catch (err: any) {
-      setErrorMsg(err.message || 'Login failed. Please check connection.');
+      setErrorMsg(friendlyError(err));
     }
   };
 
@@ -93,23 +135,13 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
     }
 
     try {
-      const q = query(
-        collection(db, 'staff_users'),
-        where('phone', '==', mobile.trim())
-      );
-      const querySnap = await getDocs(q);
-      if (!querySnap.empty) {
-        const existing = querySnap.docs[0].data();
-        if (existing.status === 'pending') {
-          setMode('pending');
-          return;
-        } else if (existing.status === 'active') {
-          setErrorMsg('This mobile number is already registered and active. Please login.');
-          return;
-        }
-      }
+      const email = getEmail(mobile);
+      const password = getPassword(pin);
 
-      await addDoc(collection(db, 'staff_users'), {
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = cred.user.uid;
+
+      await setDoc(doc(db, 'staff_users', uid), {
         name: name.trim(),
         phone: mobile.trim(),
         pin: pin.trim(),
@@ -121,7 +153,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
 
       setMode('pending');
     } catch (err: any) {
-      setErrorMsg(err.message || 'Registration failed.');
+      setErrorMsg(friendlyError(err));
     }
   };
 

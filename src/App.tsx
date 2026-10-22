@@ -1,7 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { auth, db } from './firebase';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
+import UpdatePopup from './components/UpdatePopup';
 
 export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(() => {
@@ -12,27 +16,102 @@ export default function App() {
       return null;
     }
   });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const userDocRef = doc(db, 'staff_users', firebaseUser.uid);
+          const userDocSnap = await getDoc(userDocRef);
+
+          if (userDocSnap.exists()) {
+            const data = userDocSnap.data();
+            if (data.status === 'active') {
+              const p: UserProfile = {
+                uid: firebaseUser.uid,
+                name: data.name || 'Staff',
+                mobile: data.phone || '',
+                city: data.city || 'Main',
+                role: data.role === 'sales' ? 'sales' : 'worker',
+                status: 'active',
+                createdAt: typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now()
+              };
+              setProfile(p);
+              localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+            } else {
+              setProfile(null);
+              localStorage.removeItem('shivam_staff_logged_user');
+            }
+          } else {
+            const email = firebaseUser.email || '';
+            const phoneFromEmail = email.split('@')[0];
+            if (phoneFromEmail) {
+              const q = query(collection(db, 'staff_users'), where('phone', '==', phoneFromEmail));
+              const snap = await getDocs(q);
+              if (!snap.empty) {
+                const d = snap.docs[0].data();
+                if (d.status === 'active') {
+                  const p: UserProfile = {
+                    uid: snap.docs[0].id,
+                    name: d.name || 'Staff',
+                    mobile: d.phone || phoneFromEmail,
+                    city: d.city || 'Main',
+                    role: d.role === 'sales' ? 'sales' : 'worker',
+                    status: 'active',
+                    createdAt: typeof d.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now()
+                  };
+                  setProfile(p);
+                  localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Auth state sync error:', e);
+        }
+      } else {
+        setProfile(null);
+        localStorage.removeItem('shivam_staff_logged_user');
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const handleLogout = () => {
+    auth.signOut();
     localStorage.removeItem('shivam_staff_logged_user');
     setProfile(null);
   };
 
-  if (!profile) {
+  if (loading) {
     return (
-      <AuthScreen
-        onLoginSuccess={(p) => {
-          setProfile(p);
-          localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
-        }}
-      />
+      <div className="flex min-h-screen items-center justify-center bg-[#050C18] text-slate-400">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-500 border-r-transparent"></div>
+          <p className="mt-3 text-sm">Loading Shivam Staff...</p>
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#050C18] text-slate-100 font-sans selection:bg-amber-500/30">
-      <HomeScreen profile={profile} onLogout={handleLogout} />
-    </div>
+    <>
+      <UpdatePopup />
+      {!profile ? (
+        <AuthScreen
+          onLoginSuccess={(p) => {
+            setProfile(p);
+            localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+          }}
+        />
+      ) : (
+        <div className="min-h-screen bg-[#050C18] text-slate-100 font-sans selection:bg-amber-500/30">
+          <HomeScreen profile={profile} onLogout={handleLogout} />
+        </div>
+      )}
+    </>
   );
 }
-

@@ -1,9 +1,5 @@
 {
   "appId": "com.shivam.staff",
   "appName": "Shivam Staff",
-  "webDir": "dist",
-  "server": {
-    "url": "https://shivam-staff-app.web.app",
-    "cleartext": true
-  }
+  "webDir": "dist"
 }

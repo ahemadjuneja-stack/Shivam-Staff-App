@@ -26,6 +26,12 @@ jobs:
       - name: Build Web
         run: npm run build
 
+      - name: Generate Version JSON
+        run: |
+          mkdir -p public
+          echo "{\"versionCode\": ${{ github.run_number }}, \"versionName\": \"1.0.${{ github.run_number }}\", \"apkUrl\": \"https://github.com/${{ github.repository }}/releases/download/v1.0.${{ github.run_number }}/app-debug.apk\"}" > public/app-version.json
+          cp public/app-version.json dist/app-version.json || true
+
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
@@ -41,10 +47,23 @@ jobs:
           distribution: 'zulu'
           java-version: '21'
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Fix Signing & Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_B64 }}" > keystore.b64 || true
+          python3 scripts/fix_signing.py
+
       - name: Sync Capacitor Android
         run: npx cap sync android
 
       - name: Build Android Debug APK
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          VERSION_NAME: 1.0.${{ github.run_number }}
         run: |
           if [ -d "android" ]; then
             cd android
@@ -56,8 +75,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: v1.0.0-${{ github.run_number }}
-          name: Shivam Staff App v1.0.0 (Build ${{ github.run_number }})
+          tag_name: v1.0.${{ github.run_number }}
+          name: Shivam Staff App v1.0.${{ github.run_number }} (Build ${{ github.run_number }})
           files: android/app/build/outputs/apk/debug/app-debug.apk
           draft: false
           prerelease: false
