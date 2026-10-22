@@ -47,9 +47,29 @@ jobs:
 
       - name: Apply Fixed Signing and Version Code
         run: |
+          rm -f android/app/release.keystore
           python3 scripts/fix_signing.py
           sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
           sed -i "s/versionName \".*\"/versionName \"1.0.${{ github.run_number }}\"/" android/app/build.gradle
+          echo "=== SIGNING STATE (verification) ==="
+          ls -la android/app/
+          grep -n "signingConfig\|storeFile\|keyAlias\|versionCode\|versionName" android/app/build.gradle
+          if [ -f android/app/release.keystore ]; then
+            echo "GUARD FAILED: corrupt release.keystore is back"
+            exit 1
+          fi
+          if grep -q "release.keystore" android/app/build.gradle; then
+            echo "GUARD FAILED: build.gradle still references release.keystore"
+            exit 1
+          fi
+          if ! keytool -list -keystore android/app/shivam.keystore -storepass Shivam@2026 -alias shivamstaff >/dev/null 2>&1; then
+            echo "GUARD FAILED: shivam.keystore unreadable (wrong bytes / password / alias)"
+            exit 1
+          fi
+          echo "Keystore fingerprint (must match the EXPECTED line below):"
+          keytool -list -keystore android/app/shivam.keystore -storepass Shivam@2026 -alias shivamstaff 2>/dev/null | grep -i "fingerprint"
+          echo "EXPECTED  : 7D:87:27:EB:03:C2:D8:EB:32:9A:E4:B1:B7:4E:34:E8:99:64:E9:16:F4:EF:F9:EC:F4:1B:7E:F8:93:A2:11:92"
+          echo "ALL SIGNING GUARDS PASSED"
 
       - name: Build Signed APK
         run: |

@@ -7,33 +7,31 @@ android {
         applicationId "com.shivam.staff"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode System.getenv("BUILD_NUMBER") ? System.getenv("BUILD_NUMBER").toInteger() : 1
-        versionName System.getenv("VERSION_NAME") ? System.getenv("VERSION_NAME") : "1.0.0"
+        versionCode 1
+        versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
     signingConfigs {
-        release {
-            if (file('release.keystore').exists()) {
-                storeFile file('release.keystore')
-                storePassword 'Shivam@2026'
-                keyAlias 'shivamstaff'
-                keyPassword 'Shivam@2026'
-            }
+        shivam {
+            storeFile file('shivam.keystore')
+            storePassword 'Shivam@2026'
+            keyAlias 'shivamstaff'
+            keyPassword 'Shivam@2026'
         }
     }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.shivam
+        }
         release {
+            signingConfig signingConfigs.shivam
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
-        }
-        debug {
-            if (file('release.keystore').exists()) {
-                signingConfig signingConfigs.release
-            }
         }
     }
 }
