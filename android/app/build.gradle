@@ -18,9 +18,9 @@ android {
         release {
             if (file('release.keystore').exists()) {
                 storeFile file('release.keystore')
-                storePassword 'shivam123'
-                keyAlias 'shivamkey'
-                keyPassword 'shivam123'
+                storePassword 'Shivam@2026'
+                keyAlias 'shivamstaff'
+                keyPassword 'Shivam@2026'
             }
         }
     }
