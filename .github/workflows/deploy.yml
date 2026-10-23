@@ -24,7 +24,7 @@ jobs:
       - name: Write build version file
         run: |
           mkdir -p public
-          printf '{"versionCode": %s, "builtAt": "%s"}\n' "${{ github.run_number }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > public/app-version.json
+          printf '{"versionCode": %s, "versionName": "1.0.0-%s", "builtAt": "%s", "apkUrl": "https://github.com/%s/releases/latest/download/app-debug.apk"}\n' "${{ github.run_number }}" "${{ github.run_number }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${{ github.repository }}" > public/app-version.json
 
       - name: Install Dependencies
         run: npm install --legacy-peer-deps

@@ -6,7 +6,7 @@ export default function UpdatePopup() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    checkForUpdates(1).then(({ updateAvailable, info }) => {
+    checkForUpdates().then(({ updateAvailable, info }) => {
       if (updateAvailable && info) {
         setUpdateInfo(info);
       }
