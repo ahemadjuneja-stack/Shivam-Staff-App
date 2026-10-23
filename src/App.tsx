@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
@@ -17,10 +17,12 @@ export default function App() {
     }
   });
   const [loading, setLoading] = useState(true);
+  const [watchUid, setWatchUid] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        setWatchUid(firebaseUser.uid);
         try {
           const userDocRef = doc(db, 'users', firebaseUser.uid);
           const userDocSnap = await getDoc(userDocRef);
@@ -71,6 +73,7 @@ export default function App() {
           console.error('Auth state sync error:', e);
         }
       } else {
+        setWatchUid(null);
         setProfile(null);
         localStorage.removeItem('shivam_staff_logged_user');
       }
@@ -79,6 +82,36 @@ export default function App() {
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!watchUid || profile) return;
+
+    const userDocRef = doc(db, 'users', watchUid);
+    const unsub = onSnapshot(
+      userDocRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data.status !== 'active') return;
+        const p: UserProfile = {
+          uid: snap.id,
+          name: data.name || 'Staff',
+          mobile: data.phone || data.mobile || '',
+          city: data.city || 'Main',
+          role: (data.role === 'sales' || data.role === 'salesman' || data.role === 'sales_manager') ? 'sales' : 'worker',
+          status: 'active',
+          createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
+        };
+        setProfile(p);
+        localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+      },
+      (err) => {
+        console.error('Approval watch error:', err);
+      }
+    );
+
+    return () => unsub();
+  }, [watchUid, profile]);
 
   const handleLogout = () => {
     auth.signOut();
