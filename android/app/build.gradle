@@ -19,9 +19,9 @@ android {
     signingConfigs {
         shivam {
             storeFile file('shivam.keystore')
-            storePassword 'Shivam@2026'
+            storePassword System.getenv("KEYSTORE_PASSWORD")
             keyAlias 'shivamstaff'
-            keyPassword 'Shivam@2026'
+            keyPassword System.getenv("KEYSTORE_PASSWORD")
         }
     }
     buildTypes {

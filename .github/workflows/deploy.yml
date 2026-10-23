@@ -46,9 +46,35 @@ jobs:
           npx cap sync android
 
       - name: Apply Fixed Signing and Version Code
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           rm -f android/app/release.keystore
-          python3 scripts/fix_signing.py
+          rm -f android/app/shivam.keystore
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "GUARD FAILED: KEYSTORE_B64 / KEYSTORE_PASSWORD secrets missing"
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > android/app/shivam.keystore
+          ACTUAL_SHA=$(sha256sum android/app/shivam.keystore | cut -d' ' -f1)
+          if [ "$ACTUAL_SHA" != "3d3bab09b547e422bd45cf01624d6ffa9e7dbb76b1e1089dbb51c2bd3987c515" ]; then
+            echo "GUARD FAILED: decoded keystore sha256 mismatch: $ACTUAL_SHA"
+            exit 1
+          fi
+          if ! keytool -list -keystore android/app/shivam.keystore -storepass "$KEYSTORE_PASSWORD" -alias shivamstaff >/dev/null 2>&1; then
+            echo "GUARD FAILED: shivam.keystore unreadable (wrong bytes / password / alias)"
+            exit 1
+          fi
+          EXPECTED_FP="67:EF:BB:3B:5D:A9:89:2C:EF:C6:73:2E:5E:12:D4:F2:BD:ED:34:FC:F2:14:86:88:6E:A4:DE:9D:6E:B3:69:83"
+          ACTUAL_FP=$(keytool -list -v -keystore android/app/shivam.keystore -storepass "$KEYSTORE_PASSWORD" -alias shivamstaff 2>/dev/null | grep -m1 -i "SHA256:" | sed 's/.*SHA256:[[:space:]]*//' | tr -d ': ')
+          if [ "$ACTUAL_FP" != "$(echo "$EXPECTED_FP" | tr -d ':')" ]; then
+            echo "GUARD FAILED: keystore fingerprint mismatch"
+            echo "GOT      : $ACTUAL_FP"
+            echo "EXPECTED : $EXPECTED_FP"
+            exit 1
+          fi
+          echo "Keystore fingerprint VERIFIED: $EXPECTED_FP"
           sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
           sed -i "s/versionName \".*\"/versionName \"1.0.${{ github.run_number }}\"/" android/app/build.gradle
           echo "=== SIGNING STATE (verification) ==="
@@ -62,16 +88,11 @@ jobs:
             echo "GUARD FAILED: build.gradle still references release.keystore"
             exit 1
           fi
-          if ! keytool -list -keystore android/app/shivam.keystore -storepass Shivam@2026 -alias shivamstaff >/dev/null 2>&1; then
-            echo "GUARD FAILED: shivam.keystore unreadable (wrong bytes / password / alias)"
-            exit 1
-          fi
-          echo "Keystore fingerprint (must match the EXPECTED line below):"
-          keytool -list -keystore android/app/shivam.keystore -storepass Shivam@2026 -alias shivamstaff 2>/dev/null | grep -i "fingerprint"
-          echo "EXPECTED  : 7D:87:27:EB:03:C2:D8:EB:32:9A:E4:B1:B7:4E:34:E8:99:64:E9:16:F4:EF:F9:EC:F4:1B:7E:F8:93:A2:11:92"
           echo "ALL SIGNING GUARDS PASSED"
 
       - name: Build Signed APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           cd android
           chmod +x gradlew
