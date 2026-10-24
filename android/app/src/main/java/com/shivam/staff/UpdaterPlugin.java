@@ -113,6 +113,123 @@ public class UpdaterPlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * UPDATE CHECK — NATIVE (Java HTTP). WebView/fetch/CORS ki duniya se BILKUL bahar.
+     * Do independent sources, MAX versionCode jeetega (stale mirror se bachav):
+     *   1. Firebase Hosting app-version.json (full info: vc + name + apkUrl)
+     *   2. GitHub releases/latest ka 302 redirect — Location: .../tag/v1.0.0-30 => vc
+     *      (koi API quota nahi, sirf plain HTTP redirect)
+     * Dono fail ho to bhi resolve WITH errors string — app ab CHUP NAHI rahegi.
+     */
+    @PluginMethod
+    public void checkUpdate(PluginCall call) {
+        final int localVc = ownVersionCode();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                int bestVc = -1;
+                String bestName = null;
+                String bestUrl = null;
+                String bestSource = null;
+                StringBuilder errors = new StringBuilder();
+
+                // SOURCE 1: Firebase Hosting version JSON
+                try {
+                    String body = fetchBody(
+                            "https://shivam-staff-app.web.app/app-version.json?t=" + System.currentTimeMillis(),
+                            10000);
+                    org.json.JSONObject o = new org.json.JSONObject(body);
+                    int vc = o.getInt("versionCode");
+                    String name = o.optString("versionName", "1.0.0-" + vc);
+                    String url = o.optString("apkUrl",
+                            "https://github.com/ahemadjuneja-stack/Shivam-Staff-App/releases/latest/download/app-debug.apk");
+                    if (vc > bestVc) {
+                        bestVc = vc;
+                        bestName = name;
+                        bestUrl = url;
+                        bestSource = "hosting";
+                    }
+                } catch (Exception e) {
+                    String m = e.getMessage();
+                    errors.append("hosting: ").append(m == null ? e.getClass().getSimpleName() : m).append(" | ");
+                }
+
+                // SOURCE 2: GitHub releases/latest redirect (koi API quota nahi)
+                try {
+                    HttpURLConnection c = (HttpURLConnection) new URL(
+                            "https://github.com/ahemadjuneja-stack/Shivam-Staff-App/releases/latest").openConnection();
+                    c.setConnectTimeout(10000);
+                    c.setReadTimeout(10000);
+                    c.setInstanceFollowRedirects(false);
+                    c.setRequestProperty("Cache-Control", "no-cache");
+                    int code = c.getResponseCode();
+                    String loc = c.getHeaderField("Location");
+                    c.disconnect();
+                    if ((code == 301 || code == 302) && loc != null) {
+                        String tag = loc.substring(loc.lastIndexOf('/') + 1);       // v1.0.0-30
+                        String digits = tag.substring(tag.lastIndexOf('-') + 1).replaceAll("[^0-9]", "");
+                        int vc = Integer.parseInt(digits);
+                        if (vc > bestVc) {
+                            bestVc = vc;
+                            bestName = tag.startsWith("v") ? tag.substring(1) : tag; // 1.0.0-30
+                            bestUrl = "https://github.com/ahemadjuneja-stack/Shivam-Staff-App/releases/latest/download/app-debug.apk";
+                            bestSource = "github";
+                        }
+                    } else {
+                        errors.append("github: HTTP ").append(code).append(" | ");
+                    }
+                } catch (Exception e) {
+                    String m = e.getMessage();
+                    errors.append("github: ").append(m == null ? e.getClass().getSimpleName() : m).append(" | ");
+                }
+
+                JSObject ret = new JSObject();
+                ret.put("localVc", localVc);
+                ret.put("available", bestVc > localVc);
+                if (bestVc > 0) {
+                    ret.put("versionCode", bestVc);
+                    ret.put("versionName", bestName);
+                    ret.put("apkUrl", bestUrl);
+                    ret.put("source", bestSource);
+                }
+                if (errors.length() > 0) {
+                    ret.put("errors", errors.toString());
+                }
+                call.resolve(ret);
+            }
+        }).start();
+    }
+
+    /** Chhota native GET — body string (no-cache headers ke saath, ?t= bhi lagta hai). */
+    private String fetchBody(String url, int timeoutMs) throws Exception {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(url).openConnection();
+            c.setConnectTimeout(timeoutMs);
+            c.setReadTimeout(timeoutMs);
+            c.setInstanceFollowRedirects(true);
+            c.setRequestProperty("Cache-Control", "no-cache");
+            c.setRequestProperty("Pragma", "no-cache");
+            int code = c.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new Exception("HTTP " + code);
+            }
+            InputStream in = c.getInputStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                bo.write(buf, 0, n);
+            }
+            in.close();
+            return bo.toString("UTF-8");
+        } finally {
+            if (c != null) {
+                c.disconnect();
+            }
+        }
+    }
+
     @PluginMethod
     public void getReadyApk(PluginCall call) {
         Integer vc = call.getInt("versionCode");

@@ -3,7 +3,7 @@ import { checkForUpdates, Updater, VersionInfo } from '../updater';
 import { App as CapApp } from '@capacitor/app';
 import type { PluginListenerHandle } from '@capacitor/core';
 
-type Phase = 'idle' | 'downloading' | 'ready' | 'error';
+type Phase = 'idle' | 'downloading' | 'ready' | 'error' | 'checkfail';
 
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2500;
@@ -21,6 +21,8 @@ export default function UpdatePopup() {
   const [apkPath, setApkPath] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [installErr, setInstallErr] = useState(false);
+  const [checkDetail, setCheckDetail] = useState<string | null>(null);
+  const [downloadErr, setDownloadErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const cancelledRef = useRef(false);
@@ -89,6 +91,12 @@ export default function UpdatePopup() {
         return;
       }
       finishDownload(path);
+    } catch (e: any) {
+      // 3 attempts fail — banner ATKA NAHI rahega, error card + wajah dikhegi
+      if (!cancelledRef.current) {
+        setDownloadErr(String(e?.message || 'download fail'));
+        setPhase('error');
+      }
     } finally {
       downloadInFlight.current = false;
     }
@@ -122,6 +130,8 @@ export default function UpdatePopup() {
 
       if (res.updateAvailable && res.info) {
         netRetries.current = 0;
+        setCheckDetail(null);
+        setDownloadErr(null);
         setInfo(res.info);
         // Pehle se downloaded hai? (purane open me) — turant install popup
         try {
@@ -140,20 +150,25 @@ export default function UpdatePopup() {
       }
 
       if (res.reason === 'network') {
+        // AB CHUP NAHI — exact wajah record, retries, aur ant me card
+        setCheckDetail(res.detail || 'network fail');
         if (manual) {
           showToast('Network se update check nahi ho paya — thodi der me dubara try karenge');
         }
-        // Silent auto-retry (app khula rahe to bhi pakad lega)
-        if (!manual && netRetries.current < NET_RETRY_MAX && phaseRef.current === 'idle') {
+        if (netRetries.current < NET_RETRY_MAX && phaseRef.current === 'idle') {
           netRetries.current += 1;
           window.setTimeout(() => {
             if (!cancelledRef.current) runCheck(false);
           }, NET_RETRY_DELAY_MS);
+        } else if (phaseRef.current === 'idle') {
+          // Retries poore — card ke saath EXACT wajah on-screen
+          setPhase('checkfail');
         }
         return;
       }
 
       // reason 'none' — up-to-date
+      setCheckDetail(null);
       if (manual) {
         showToast(localVc ? `Aap latest version pe hi ho (v${localVc})` : 'Aap latest version pe hi ho');
       }
@@ -251,10 +266,23 @@ export default function UpdatePopup() {
           return;
         }
         finishDownload(path);
+      } catch (e: any) {
+        if (!cancelledRef.current) {
+          setDownloadErr(String(e?.message || 'download fail'));
+          setPhase('error');
+        }
       } finally {
         downloadInFlight.current = false;
       }
     })();
+  };
+
+  const retryCheck = () => {
+    netRetries.current = 0;
+    setCheckDetail(null);
+    setDismissed(false);
+    setPhase('idle');
+    runCheck(false);
   };
 
   // Download complete hone par dismissed reset (popup pakka dikhe)
@@ -324,6 +352,11 @@ export default function UpdatePopup() {
                 Network ki wajah se update download nahi ho paya. Adhoora download save rehta hai —
                 dubara koshish par wahin se aage badhega. Browser ki zaroorat nahi.
               </p>
+              {downloadErr && (
+                <p className="mt-2 rounded-lg border border-slate-700/50 bg-slate-900/80 px-3 py-2 text-left text-[10px] break-words text-slate-500">
+                  Wajah: {downloadErr}
+                </p>
+              )}
             </div>
             <div className="flex gap-3 pt-2">
               <button
@@ -334,6 +367,42 @@ export default function UpdatePopup() {
               </button>
               <button
                 onClick={retryDownload}
+                className="flex-1 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-lg shadow-amber-500/20 transition-colors hover:bg-amber-600"
+              >
+                Phir Se Koshish Karo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {phase === 'checkfail' && !dismissed && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-fadeIn">
+          <div className="space-y-4 rounded-2xl border border-[#1D2B47] bg-[#0C1628] p-6 text-center shadow-2xl max-w-sm w-full">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-amber-500/30 bg-amber-500/10 text-xl font-bold text-amber-400">
+              !
+            </div>
+            <div>
+              <h3 className="text-lg font-bold uppercase tracking-wider text-white">Update Check Nahi Ho Paya</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                App naya version check nahi kar saki — network ki dikkat lagti hai. WiFi/data check
+                karke dubara koshish karo.
+              </p>
+              {checkDetail && (
+                <p className="mt-2 rounded-lg border border-slate-700/50 bg-slate-900/80 px-3 py-2 text-left text-[10px] break-words text-slate-500">
+                  {checkDetail}
+                </p>
+              )}
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setDismissed(true)}
+                className="flex-1 rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-700"
+              >
+                Baad Me
+              </button>
+              <button
+                onClick={retryCheck}
                 className="flex-1 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-lg shadow-amber-500/20 transition-colors hover:bg-amber-600"
               >
                 Phir Se Koshish Karo

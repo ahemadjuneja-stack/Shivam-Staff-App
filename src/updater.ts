@@ -20,6 +20,17 @@ export interface DownloadResult {
   cached?: boolean;
 }
 
+// UpdaterPlugin.checkUpdate() ka result — NATIVE Java HTTP check (build 31+)
+export interface NativeCheckResult {
+  available: boolean;
+  localVc?: number;
+  versionCode?: number;
+  versionName?: string;
+  apkUrl?: string;
+  source?: string;
+  errors?: string;
+}
+
 export type UpdateCheckReason = 'none' | 'network';
 
 export interface UpdateCheckResult {
@@ -27,9 +38,13 @@ export interface UpdateCheckResult {
   info?: VersionInfo;
   reason?: UpdateCheckReason;
   localVersion?: number;
+  // Har source ka exact error ("hosting: timeout | github: HTTP 403") — support diagnostics
+  detail?: string;
+  source?: string;
 }
 
 export interface UpdaterPluginDef {
+  checkUpdate(): Promise<NativeCheckResult>;
   getReadyApk(options: { versionCode: number }): Promise<ReadyApkResult>;
   downloadApk(options: { url: string, versionCode: number }): Promise<DownloadResult>;
   installApk(options: { path: string }): Promise<void>;
@@ -49,7 +64,38 @@ export async function checkForUpdates(currentVersionCode?: number): Promise<Upda
     return { updateAvailable: false, reason: 'none' };
   }
 
-  // Local version: pehle PackageManager (native — 100% reliable), phir bundled file.
+  // BUILD 31+: check NATIVE (Java HTTP, dual-source) — WebView/CORS/silent-fail era KHATAM
+  try {
+    const r = await Updater.checkUpdate();
+    const localVersion =
+      typeof r.localVc === 'number' && r.localVc > 0 ? r.localVc : currentVersionCode ?? 0;
+    if (r.available && typeof r.versionCode === 'number' && r.apkUrl) {
+      return {
+        updateAvailable: true,
+        info: {
+          versionCode: r.versionCode,
+          versionName: r.versionName || `1.0.0-${r.versionCode}`,
+          apkUrl: r.apkUrl
+        },
+        localVersion,
+        source: r.source
+      };
+    }
+    return {
+      updateAvailable: false,
+      reason: r.errors ? 'network' : 'none',
+      localVersion,
+      detail: r.errors || undefined,
+      source: r.source
+    };
+  } catch {
+    // Purana native plugin (checkUpdate method exist nahi karta) — legacy path
+    return legacyCheck(currentVersionCode);
+  }
+}
+
+// LEGACY: WebView fetch (purane builds ke plugin ke saath compat) — ab bhi silent NAHI
+async function legacyCheck(currentVersionCode?: number): Promise<UpdateCheckResult> {
   let localVersion = currentVersionCode;
   if (localVersion === undefined) {
     try {
@@ -78,18 +124,22 @@ export async function checkForUpdates(currentVersionCode?: number): Promise<Upda
   try {
     const res = await fetch(`https://shivam-staff-app.web.app/app-version.json?t=${Date.now()}`);
     if (!res.ok) {
-      return { updateAvailable: false, reason: 'network', localVersion };
+      return { updateAvailable: false, reason: 'network', localVersion, detail: `webview: HTTP ${res.status}` };
     }
     const data: VersionInfo = await res.json();
     if (typeof data?.versionCode !== 'number') {
-      return { updateAvailable: false, reason: 'network', localVersion };
+      return { updateAvailable: false, reason: 'network', localVersion, detail: 'webview: bad json' };
     }
     if (data.versionCode > localVersion) {
       return { updateAvailable: true, info: data, localVersion };
     }
     return { updateAvailable: false, reason: 'none', localVersion };
-  } catch {
-    // Offline / network fail — ab silent NAHI, reason ke saath report karte hain
-    return { updateAvailable: false, reason: 'network', localVersion };
+  } catch (e: any) {
+    return {
+      updateAvailable: false,
+      reason: 'network',
+      localVersion,
+      detail: `webview: ${e?.message || 'fetch fail'}`
+    };
   }
 }
