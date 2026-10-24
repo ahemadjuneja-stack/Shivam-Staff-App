@@ -58,7 +58,21 @@ public class UpdaterPlugin extends Plugin {
         for (File f : files) {
             String name = f.getName();
             if (name.endsWith(".tmp")) {
-                f.delete();
+                // update-N.tmp — sirf NAYE (N > ownVc) version ka adhoora download
+                // resume ke kaam aata hai; installed/purana version ka tmp bekaar hai
+                String base = name.substring(0, name.length() - ".tmp".length());
+                if (base.startsWith("update-")) {
+                    try {
+                        int vc = Integer.parseInt(base.substring("update-".length()));
+                        if (vc <= ownVc) {
+                            f.delete();
+                        }
+                    } catch (NumberFormatException bad) {
+                        f.delete();
+                    }
+                } else {
+                    f.delete();
+                }
                 continue;
             }
             if (name.startsWith("update-") && name.endsWith(".apk")) {
@@ -83,10 +97,13 @@ public class UpdaterPlugin extends Plugin {
         File[] files = updatesDir().listFiles();
         if (files == null) return;
         String keep = "update-" + keepVc + ".apk";
+        String keepTmp = "update-" + keepVc + ".tmp"; // adhoora download — resume ke liye bachta hai
         for (File f : files) {
-            if (!f.getName().equals(keep)) {
-                f.delete();
+            String name = f.getName();
+            if (name.equals(keep) || name.equals(keepTmp)) {
+                continue;
             }
+            f.delete();
         }
     }
 
@@ -145,65 +162,114 @@ public class UpdaterPlugin extends Plugin {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                File tmp = new File(updatesDir(), "update-" + vc + ".tmp");
-                HttpURLConnection conn = null;
-                try {
-                    URL u = new URL(url);
-                    conn = (HttpURLConnection) u.openConnection();
-                    conn.setConnectTimeout(15000);
-                    conn.setReadTimeout(60000);
-                    conn.setInstanceFollowRedirects(true);
-                    conn.connect();
-                    int code = conn.getResponseCode();
-                    if (code < 200 || code >= 300) {
-                        call.reject("HTTP " + code);
-                        return;
-                    }
-                    long total = conn.getContentLength();
-                    InputStream in = conn.getInputStream();
-                    FileOutputStream fos = new FileOutputStream(tmp);
-                    byte[] buf = new byte[16384];
-                    long done = 0;
-                    int lastPct = 0;
-                    int n;
-                    while ((n = in.read(buf)) > 0) {
-                        fos.write(buf, 0, n);
-                        done += n;
-                        if (total > 0) {
-                            int pct = (int) (done * 100 / total);
-                            if (pct >= lastPct + 10) {
-                                lastPct = pct;
-                                JSObject p = new JSObject();
-                                p.put("progress", pct);
-                                notifyListeners("progress", p);
-                            }
-                        }
-                    }
-                    fos.flush();
-                    fos.close();
-                    in.close();
-                    if (out.exists()) {
-                        out.delete();
-                    }
-                    if (!tmp.renameTo(out)) {
-                        call.reject("finalize failed");
-                        return;
-                    }
+                String err = downloadToFile(url, vc, out);
+                if (err == null) {
                     JSObject ret = new JSObject();
                     ret.put("path", out.getAbsolutePath());
                     ret.put("size", out.length());
                     ret.put("cached", false);
                     call.resolve(ret);
-                } catch (Exception e) {
-                    tmp.delete();
-                    call.reject("download failed: " + e.getMessage());
-                } finally {
-                    if (conn != null) {
-                        conn.disconnect();
-                    }
+                } else {
+                    call.reject(err);
                 }
             }
         }).start();
+    }
+
+    /**
+     * Download RESUME support ke saath: adhoora .tmp pada hai to wahi se aage
+     * (Range header => 206). Server Range ignore kare (200) to 0 se. Galat resume
+     * point (416) ho to ek baar fresh try. Fail hone par .tmp BACHA rehta hai —
+     * agla attempt ya agla app-open wahin se resume karta hai (flaky network me
+     * bhi 6.7MB poora ho jata hai). Returns null on success, error string warna.
+     */
+    private String downloadToFile(String url, int vc, File out) {
+        File tmp = new File(updatesDir(), "update-" + vc + ".tmp");
+        return tryDownload(url, tmp, out, true);
+    }
+
+    private String tryDownload(String url, File tmp, File out, boolean allowFreshRetry) {
+        HttpURLConnection conn = null;
+        long resumeFrom = 0;
+        boolean append = false;
+        try {
+            if (tmp.exists() && tmp.length() > 0) {
+                resumeFrom = tmp.length();
+                append = true;
+            }
+            URL u = new URL(url);
+            conn = (HttpURLConnection) u.openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(60000);
+            conn.setInstanceFollowRedirects(true);
+            if (resumeFrom > 0) {
+                conn.setRequestProperty("Range", "bytes=" + resumeFrom + "-");
+            }
+            conn.connect();
+            int code = conn.getResponseCode();
+
+            if (code == 416) {
+                // Resume point file size se aage — tmp corrupt/stale. Fresh start.
+                if (allowFreshRetry) {
+                    tmp.delete();
+                    conn.disconnect();
+                    return tryDownload(url, tmp, out, false);
+                }
+                return "HTTP 416";
+            }
+
+            if (resumeFrom > 0 && code == 200) {
+                // Server ne Range ignore kiya — poora body aa raha hai, 0 se likho
+                resumeFrom = 0;
+                append = false;
+            } else if (resumeFrom > 0 && code != 206) {
+                return "HTTP " + code;
+            } else if (resumeFrom == 0 && (code < 200 || code >= 300)) {
+                return "HTTP " + code;
+            }
+
+            long total = conn.getContentLength();
+            if (resumeFrom > 0 && code == 206 && total > 0) {
+                total += resumeFrom;
+            }
+
+            InputStream in = conn.getInputStream();
+            FileOutputStream fos = new FileOutputStream(tmp, append);
+            byte[] buf = new byte[16384];
+            long done = resumeFrom;
+            int lastPct = -1;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                fos.write(buf, 0, n);
+                done += n;
+                if (total > 0) {
+                    int pct = (int) ((done * 100) / total);
+                    if (pct > lastPct && pct <= 100) {
+                        lastPct = pct;
+                        JSObject p = new JSObject();
+                        p.put("progress", pct);
+                        notifyListeners("progress", p);
+                    }
+                }
+            }
+            fos.flush();
+            fos.close();
+            in.close();
+            if (out.exists()) {
+                out.delete();
+            }
+            if (!tmp.renameTo(out)) {
+                return "finalize failed";
+            }
+            return null;
+        } catch (Exception e) {
+            // .tmp DELETE NAHI karte — resume next attempt / next app-open pe
+            return "download failed: " + e.getMessage();
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
     }
 
     @PluginMethod
