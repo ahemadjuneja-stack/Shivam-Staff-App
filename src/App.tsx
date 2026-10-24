@@ -6,8 +6,11 @@ import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
 import UpdatePopup from './components/UpdatePopup';
+import IntroScreen from './components/IntroScreen';
+import BrandBadge from './components/BrandBadge';
 
 export default function App() {
+  const [introDone, setIntroDone] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(() => {
     try {
       const saved = localStorage.getItem('shivam_staff_logged_user');
@@ -119,21 +122,19 @@ export default function App() {
     setProfile(null);
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#050C18] text-slate-400">
-        <div className="text-center">
-          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-500 border-r-transparent"></div>
-          <p className="mt-3 text-sm">Loading Shivam Staff...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <>
+      {!introDone && <IntroScreen onDone={() => setIntroDone(true)} />}
+      <BrandBadge />
       <UpdatePopup />
-      {!profile ? (
+      {loading ? (
+        <div className="flex min-h-screen items-center justify-center bg-[#050C18] text-slate-400">
+          <div className="text-center">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-500 border-r-transparent"></div>
+            <p className="mt-3 text-sm">Loading Shivam Staff...</p>
+          </div>
+        </div>
+      ) : !profile ? (
         <AuthScreen
           onLoginSuccess={(p) => {
             setProfile(p);
