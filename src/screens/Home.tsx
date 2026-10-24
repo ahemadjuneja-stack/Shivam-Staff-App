@@ -17,6 +17,7 @@ import {
   StarEvent
 } from '../types';
 import HisabScreen from './Hisab';
+import DutyTimeSection from '../components/DutyTimeSection';
 
 interface HomeProps {
   profile: UserProfile;
@@ -432,6 +433,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
           {formattedDate}
         </p>
       </div>
+
+      {/* DUTY TIME SECTION — Boss demo (TIME section): sirf worker role ko, sales ko nahi */}
+      {profile.role === 'worker' && (
+        <DutyTimeSection profile={profile} punches={punches} isOnDuty={isOnDuty} />
+      )}
 
       {/* Menu Section Label */}
       <div className="text-[12px] font-bold uppercase tracking-[2.4px] text-[#5B677D] mb-3 px-1">

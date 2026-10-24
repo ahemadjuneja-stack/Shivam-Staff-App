@@ -20,6 +20,15 @@ export interface ShopConfig {
   shiftStart: string;
 }
 
+// Monthly duty target — dashboard/console se set hota hai (Boss order: TIME section)
+// Doc ids: duty_targets/{uid}_{YYYY-MM} | duty_targets/default_{YYYY-MM} | duty_targets/default
+export interface DutyTarget {
+  uid?: string;
+  month?: string;
+  targetHours: number;
+  updatedAt?: number;
+}
+
 export interface PunchRecord {
   id?: string;
   uid: string;
