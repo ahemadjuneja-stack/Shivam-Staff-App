@@ -1,10 +1,37 @@
 import { Browser } from '@capacitor/browser';
+import { registerPlugin } from '@capacitor/core';
+import type { PluginListenerHandle } from '@capacitor/core';
 
 export interface VersionInfo {
   versionCode: number;
   versionName: string;
   apkUrl: string;
 }
+
+export interface ReadyApkResult {
+  exists: boolean;
+  path?: string;
+  size?: number;
+}
+
+export interface DownloadResult {
+  path: string;
+  size: number;
+  cached?: boolean;
+}
+
+export interface UpdaterPluginDef {
+  getReadyApk(options: { versionCode: number }): Promise<ReadyApkResult>;
+  downloadApk(options: { url: string; versionCode: number }): Promise<DownloadResult>;
+  installApk(options: { path: string }): Promise<void>;
+  addListener(
+    eventName: 'progress',
+    listenerFunc: (data: { progress: number }) => void
+  ): Promise<PluginListenerHandle>;
+}
+
+// Native plugin (UpdaterPlugin.java) — sirf APK me available, web me calls reject hongi
+export const Updater = registerPlugin<UpdaterPluginDef>('Updater');
 
 export async function checkForUpdates(currentVersionCode?: number): Promise<{ updateAvailable: boolean; info?: VersionInfo }> {
   // The update popup only makes sense inside the installed APK.
