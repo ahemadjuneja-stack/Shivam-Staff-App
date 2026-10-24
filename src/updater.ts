@@ -1,4 +1,3 @@
-import { Browser } from '@capacitor/browser';
 import { registerPlugin } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
 
@@ -24,6 +23,7 @@ export interface UpdaterPluginDef {
   getReadyApk(options: { versionCode: number }): Promise<ReadyApkResult>;
   downloadApk(options: { url: string; versionCode: number }): Promise<DownloadResult>;
   installApk(options: { path: string }): Promise<void>;
+  cleanStale(): Promise<void>;
   addListener(
     eventName: 'progress',
     listenerFunc: (data: { progress: number }) => void
@@ -65,8 +65,4 @@ export async function checkForUpdates(currentVersionCode?: number): Promise<{ up
     // Silently handle fetch failure in offline environments
   }
   return { updateAvailable: false };
-}
-
-export async function openDownloadUrl(url: string) {
-  await Browser.open({ url });
 }

@@ -35,20 +35,27 @@ export default function IntroScreen({ onDone }: { onDone: () => void }) {
     >
       <div className="flex flex-col items-center select-none">
         <div className="intro-rise">
-          <span className="shivam-silver shivam-silver-shine text-[104px] leading-none drop-shadow-[0_2px_28px_rgba(180,210,250,0.3)]">
+          <span
+            className="shivam-silver shivam-silver-shine leading-none drop-shadow-[0_4px_44px_rgba(180,210,250,0.38)]"
+            style={{ fontSize: 'clamp(160px, 55vw, 240px)' }}
+          >
             S
           </span>
         </div>
-        <div className="intro-rise intro-rise-delay mt-7">
-          <span className="shivam-silver shivam-silver-shine text-[21px] tracking-[0.5em] pl-[0.5em]">
+        <div className="intro-rise intro-rise-delay mt-9">
+          <span
+            className="shivam-silver shivam-silver-shine tracking-[0.5em] pl-[0.5em]"
+            style={{ fontSize: 'clamp(24px, 6.5vw, 30px)' }}
+          >
             SHIVAM
           </span>
         </div>
         <div
-          className="intro-rise intro-rise-delay mt-10 h-px w-24"
+          className="intro-rise intro-rise-delay mt-11 h-px"
           style={{
+            width: 'clamp(150px, 42vw, 200px)',
             background:
-              'linear-gradient(90deg, transparent, rgba(226,236,250,0.55), transparent)'
+              'linear-gradient(90deg, transparent, rgba(226,236,250,0.6), transparent)'
           }}
         />
       </div>

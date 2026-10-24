@@ -36,6 +36,66 @@ public class UpdaterPlugin extends Plugin {
         return new File(updatesDir(), "update-" + versionCode + ".apk");
     }
 
+    /** App ka apna (currently installed) versionCode — PackageManager se. */
+    private int ownVersionCode() {
+        try {
+            return getContext()
+                    .getPackageManager()
+                    .getPackageInfo(getContext().getPackageName(), 0)
+                    .versionCode;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Stale files clean: already-installed versions ke APK + adhoore .tmp downloads.
+     * "Purana version apne aap clean ho — mix na ho" rule.
+     */
+    private void cleanInstalledStale(int ownVc) {
+        File[] files = updatesDir().listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            String name = f.getName();
+            if (name.endsWith(".tmp")) {
+                f.delete();
+                continue;
+            }
+            if (name.startsWith("update-") && name.endsWith(".apk")) {
+                String mid = name.substring("update-".length(), name.length() - ".apk".length());
+                try {
+                    int vc = Integer.parseInt(mid);
+                    if (vc <= ownVc) {
+                        f.delete(); // ye version pehle se installed hai — file bekaar
+                    }
+                } catch (NumberFormatException bad) {
+                    f.delete(); // garbage naam
+                }
+            }
+        }
+    }
+
+    /**
+     * Strict one-file rule: sirf target version ka APK rahega — baaki sab delete.
+     * Isse kabhi do alag update files ek saath nahi rehti (no mixing).
+     */
+    private void cleanExcept(int keepVc) {
+        File[] files = updatesDir().listFiles();
+        if (files == null) return;
+        String keep = "update-" + keepVc + ".apk";
+        for (File f : files) {
+            if (!f.getName().equals(keep)) {
+                f.delete();
+            }
+        }
+    }
+
+    @PluginMethod
+    public void cleanStale(PluginCall call) {
+        cleanInstalledStale(ownVersionCode());
+        call.resolve();
+    }
+
     @PluginMethod
     public void getReadyApk(PluginCall call) {
         Integer vc = call.getInt("versionCode");
@@ -43,6 +103,9 @@ public class UpdaterPlugin extends Plugin {
             call.reject("versionCode required");
             return;
         }
+        // Pehle stale/purana saaf karo, phir check — sirf pending naya APK bachta hai
+        cleanInstalledStale(ownVersionCode());
+        cleanExcept(vc);
         File f = apkFile(vc);
         JSObject ret = new JSObject();
         boolean ready = f.exists() && f.length() > 0;
@@ -67,6 +130,7 @@ public class UpdaterPlugin extends Plugin {
 
         // Already downloaded? Resolve immediately (no re-download).
         if (out.exists() && out.length() > 0) {
+            cleanExcept(vc); // doosri koi file nahi bachegi — sirf ye
             JSObject ret = new JSObject();
             ret.put("path", out.getAbsolutePath());
             ret.put("size", out.length());
@@ -74,6 +138,9 @@ public class UpdaterPlugin extends Plugin {
             call.resolve(ret);
             return;
         }
+
+        // Naya download shuru — purani saari files (doosre versions/tmp) hata do
+        cleanExcept(vc);
 
         new Thread(new Runnable() {
             @Override
