@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+}
+
 @layer utilities {
   @keyframes textShine {
     0% {
@@ -27,10 +32,49 @@
 }
 
 body {
-  background: radial-gradient(circle at 50% 20%, #0d1b32 0%, #050914 70%, #020408 100%);
+  /* Splash/intro ka hi navy gradient — poora app ek hi brand color family */
+  background: linear-gradient(180deg, #1A3852 0%, #10264A 42%, #0A1535 75%, #081027 100%);
+  background-attachment: fixed;
   color: #f1f5f9;
   min-height: 100vh;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+.pb-safe {
+  padding-bottom: var(--sab);
+}
+
+/* ===== Smooth slide navigation (no back buttons — gesture/edge back) ===== */
+@layer utilities {
+  @keyframes slideInFwd {
+    from {
+      opacity: 0;
+      transform: translateX(56px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes slideInBack {
+    from {
+      opacity: 0;
+      transform: translateX(-56px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .animate-slide-fwd {
+    animation: slideInFwd 0.28s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+  }
+
+  .animate-slide-back {
+    animation: slideInBack 0.28s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+  }
 }
 
 /* ===== SHIVAM brand: silver metal text + shine (Aboreto) ===== */

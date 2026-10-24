@@ -27,6 +27,28 @@ type SectionType = 'home' | 'attendance' | 'worklog' | 'sales' | 'profile';
 
 export default function Home({ profile, onLogout }: HomeProps) {
   const [activeSection, setActiveSection] = useState<SectionType>('home');
+  // Slide direction: 'fwd' = section khula, 'back' = wapas home (hardware back gesture)
+  const [navDir, setNavDir] = useState<'fwd' | 'back'>('fwd');
+
+  // Section open (forward): history me push — taki phone ka back gesture smooth slide ke saath wapas le aaye
+  const openSection = (s: SectionType) => {
+    if (s === 'home' || s === activeSection) return;
+    setNavDir('fwd');
+    setActiveSection(s);
+    window.history.pushState({ section: s }, '');
+  };
+
+  // Hardware back => popstate => slide-back animation ke saath home
+  useEffect(() => {
+    const onPop = () => {
+      setNavDir('back');
+      setActiveSection('home');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const slideCls = navDir === 'fwd' ? 'animate-slide-fwd' : 'animate-slide-back';
 
   // Duty / Attendance state
   const [isOnDuty, setIsOnDuty] = useState<boolean>(false);
@@ -177,24 +199,18 @@ export default function Home({ profile, onLogout }: HomeProps) {
     month: 'short'
   });
 
-  // Top Bar component for active section screens
+  // Section title bar — koi back button nahi (phone ka back gesture use hota hai)
   const renderTopAppBar = (title: string) => (
-    <div className="flex items-center justify-between bg-[#0C1628] border border-[#1D2B47] rounded-[22px] px-4 py-3.5 mb-5 shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
-      <button
-        onClick={() => setActiveSection('home')}
-        className="flex items-center gap-1.5 text-sm font-bold text-[#F59300] hover:text-[#FBBF24] transition"
-      >
-        <span className="text-lg">←</span> Back
-      </button>
-      <h2 className="text-base font-bold text-white tracking-wide uppercase">{title}</h2>
-      <div className="w-12"></div>
+    <div className="mb-5 flex items-center px-1">
+      <span className="mr-2.5 h-5 w-1 rounded-full bg-[#F59300]" />
+      <h2 className="text-lg font-extrabold text-white tracking-wide uppercase">{title}</h2>
     </div>
   );
 
   // Render Attendance Screen
   if (activeSection === 'attendance') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+      <div className={`min-h-screen text-slate-100 p-4 pb-14 ${slideCls}`}>
         {renderTopAppBar('Attendance')}
 
         {/* Duty Punch Banner */}
@@ -254,7 +270,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // Render Work Log Screen
   if (activeSection === 'worklog') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+      <div className={`min-h-screen text-slate-100 p-4 pb-14 ${slideCls}`}>
         {renderTopAppBar('Work Log')}
 
         <form onSubmit={handleWorkLogSubmit} className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 shadow-[0_8px_24px_rgba(0,0,0,0.4)] space-y-4 mb-6">
@@ -314,7 +330,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // Render Sales Screen
   if (activeSection === 'sales') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+      <div className={`min-h-screen text-slate-100 p-4 pb-14 ${slideCls}`}>
         {renderTopAppBar('Sales & Ledger')}
         <HisabScreen profile={profile} />
       </div>
@@ -324,7 +340,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // Render Profile Screen
   if (activeSection === 'profile') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+      <div className={`min-h-screen text-slate-100 p-4 pb-14 ${slideCls}`}>
         {renderTopAppBar('Profile')}
 
         <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.4)] space-y-5">
@@ -366,10 +382,10 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
   // MAIN HOME SCREEN VIEW (Matches Mockup Spec Exactly)
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#050C18] via-[#040A14] to-[#04080F] text-slate-100 p-4 pb-12 max-w-md mx-auto">
+    <div className={`min-h-screen text-slate-100 p-4 pb-14 ${slideCls}`}>
       {/* Toast Notice */}
       {notice && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-[#1D2B47] border border-[#F59300]/40 text-white text-xs px-4 py-2.5 rounded-full shadow-2xl animate-fade-in">
+        <div className="fixed left-1/2 z-50 -translate-x-1/2 bg-[#1D2B47] border border-[#F59300]/40 text-white text-xs px-4 py-2.5 rounded-full shadow-2xl animate-fade-in" style={{ top: 'calc(var(--sat) + 58px)' }}>
           {notice}
         </div>
       )}
@@ -426,7 +442,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
       <div className="grid grid-cols-2 gap-[14px]">
         {/* 1. Attendance */}
         <button
-          onClick={() => setActiveSection('attendance')}
+          onClick={() => openSection('attendance')}
           className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
         >
           <div className="h-[62px] w-[62px] rounded-[19px] bg-[#F59300]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
@@ -440,7 +456,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
         {/* 2. Work Log */}
         <button
-          onClick={() => setActiveSection('worklog')}
+          onClick={() => openSection('worklog')}
           className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
         >
           <div className="h-[62px] w-[62px] rounded-[19px] bg-[#A855F7]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
@@ -456,7 +472,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
         {/* 3. Sales */}
         <button
-          onClick={() => setActiveSection('sales')}
+          onClick={() => openSection('sales')}
           className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
         >
           <div className="h-[62px] w-[62px] rounded-[19px] bg-[#F0B429]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
@@ -474,7 +490,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
         {/* 4. Profile */}
         <button
-          onClick={() => setActiveSection('profile')}
+          onClick={() => openSection('profile')}
           className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
         >
           <div className="h-[62px] w-[62px] rounded-[19px] bg-[#38BDF8]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">

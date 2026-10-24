@@ -162,7 +162,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
 
   if (mode === 'pending') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#050914] p-4">
+      <div className="flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-slate-900/95 p-8 text-center shadow-2xl backdrop-blur">
           <div className="mb-6 flex justify-center">
             <ShivamLogo size="md" subtitle="Staff Portal" />
@@ -192,7 +192,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#050914] p-4">
+    <div className="flex min-h-screen items-center justify-center p-4">
       <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-slate-900/90 p-7 shadow-2xl backdrop-blur">
         <div className="mb-6 text-center flex flex-col items-center">
           <ShivamLogo size="lg" subtitle="Staff & Sales Portal" />

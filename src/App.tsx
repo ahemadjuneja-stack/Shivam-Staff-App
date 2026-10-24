@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { Capacitor } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 import { auth, db } from './firebase';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
 import UpdatePopup from './components/UpdatePopup';
 import IntroScreen from './components/IntroScreen';
-import BrandBadge from './components/BrandBadge';
+import BrandHeader from './components/BrandHeader';
 
 export default function App() {
   const [introDone, setIntroDone] = useState(false);
@@ -122,30 +124,52 @@ export default function App() {
     setProfile(null);
   };
 
+  // Hardware back: in-app history => smooth slide back; root pe => app background (exit nahi)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let handle: any = null;
+    CapApp.addListener('backButton', ({ canGoBack }) => {
+      if (canGoBack) {
+        window.history.back();
+      } else {
+        CapApp.minimizeApp();
+      }
+    }).then((h) => {
+      handle = h;
+    });
+    return () => {
+      if (handle) handle.remove().catch(() => {});
+    };
+  }, []);
+
   return (
     <>
       {!introDone && <IntroScreen onDone={() => setIntroDone(true)} />}
-      <BrandBadge />
       <UpdatePopup />
-      {loading ? (
-        <div className="flex min-h-screen items-center justify-center bg-[#050C18] text-slate-400">
-          <div className="text-center">
-            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-500 border-r-transparent"></div>
-            <p className="mt-3 text-sm">Loading Shivam Staff...</p>
-          </div>
-        </div>
-      ) : !profile ? (
-        <AuthScreen
-          onLoginSuccess={(p) => {
-            setProfile(p);
-            localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
-          }}
-        />
-      ) : (
-        <div className="min-h-screen bg-[#050C18] text-slate-100 font-sans selection:bg-amber-500/30">
-          <HomeScreen profile={profile} onLogout={handleLogout} />
-        </div>
-      )}
+      <div className="relative flex min-h-screen flex-col">
+        <BrandHeader />
+        <main className="flex-1 pb-safe">
+          {loading ? (
+            <div className="flex min-h-[80vh] items-center justify-center text-slate-400">
+              <div className="text-center">
+                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-500 border-r-transparent"></div>
+                <p className="mt-3 text-sm">Loading Shivam Staff...</p>
+              </div>
+            </div>
+          ) : !profile ? (
+            <AuthScreen
+              onLoginSuccess={(p) => {
+                setProfile(p);
+                localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+              }}
+            />
+          ) : (
+            <div className="text-slate-100 font-sans selection:bg-amber-500/30">
+              <HomeScreen profile={profile} onLogout={handleLogout} />
+            </div>
+          )}
+        </main>
+      </div>
     </>
   );
 }
