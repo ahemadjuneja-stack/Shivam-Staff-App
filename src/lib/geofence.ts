@@ -7,7 +7,7 @@
 // Dashboard manager NO dabaye to Home.tsx wala listener points AUTO
 // cut karta hai — koi manual credit editing nahi.
 // ============================================================
-import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { fetchLocation } from './reporting';
 import { enqueueOutbox } from './sync';
@@ -100,14 +100,39 @@ function writeState(st: OutsideState | null) {
   }
 }
 
-// Event close -> outside_logs me write. SYNC-GUARANTEE: write se PEHLE
-// outbox journal (opId ke saath) — cache evict/app data clear ho jaye to
-// bhi reconcile layer is log ko Firebase tak pohnchayegi (lib/sync.ts).
-async function writeOutsideLog(uid: string, name: string, st: OutsideState, toAt: number) {
-  const outsideMin = Math.max(1, Math.round((toAt - st.fromAt) / 60000));
-  const opId = `ol-${uid}-${st.fromAt}`;
+// OUTSIDE EVENT = TWO-PHASE Firestore write (LIVE POPUP order 2026-10-26):
+//   OPEN  -> doc 'ol-{uid}-{fromAt}' {status:'open', fromAt, lat, lng} — dashboard
+//            manager ko REAL-TIME popup + per-staff LIVE stopwatch (inventory me)
+//   CLOSE -> same doc merge {toAt, outsideMin, status:'pending'} — auto points
+//            compare (allowedMin) staff app listener me hota hai
+// Custom doc ID se dono phases idempotent — offline queue/retry se duplicate
+// kabhi nahi banega. SYNC-GUARANTEE: dono phases outbox journal me PEHLE
+// (opId ke saath) — cache evict/app clear par bhi reconcile Firebase tak
+// pohnchayega (lib/sync.ts).
+const openDocId = (uid: string, fromAt: number) => `ol-${uid}-${fromAt}`;
+
+function openOutsideEvent(uid: string, name: string, st: OutsideState) {
+  const docId = openDocId(uid, st.fromAt);
   const payload = {
-    opId,
+    opId: `open-${docId}`,
+    uid,
+    name,
+    fromAt: st.fromAt,
+    lat: st.lat,
+    lng: st.lng,
+    status: 'open' as const,
+    flags: st.flags || [],
+    createdAt: Date.now()
+  };
+  enqueueOutbox('outside_log', payload, `open-${docId}`); // JOURNAL FIRST
+  setDoc(doc(db, 'outside_logs', docId), payload, { merge: true }).catch(() => {});
+}
+
+async function closeOutsideEvent(uid: string, name: string, st: OutsideState, toAt: number) {
+  const docId = openDocId(uid, st.fromAt);
+  const outsideMin = Math.max(1, Math.round((toAt - st.fromAt) / 60000));
+  const payload = {
+    opId: `close-${docId}`,
     uid,
     name,
     fromAt: st.fromAt,
@@ -115,23 +140,38 @@ async function writeOutsideLog(uid: string, name: string, st: OutsideState, toAt
     outsideMin,
     lat: st.lat,
     lng: st.lng,
-    status: 'pending',
+    status: 'pending' as const,
     flags: st.flags || [],
-    createdAt: Date.now()
+    closedAt: Date.now()
   };
-  enqueueOutbox('outside_log', payload, opId); // JOURNAL FIRST
-  await addDoc(collection(db, 'outside_logs'), payload).catch(() => {}); // offline = cache queue
+  enqueueOutbox('outside_log', payload, `close-${docId}`); // JOURNAL FIRST
+  await setDoc(doc(db, 'outside_logs', docId), payload, { merge: true }).catch(() => {}); // offline = cache queue
+}
+
+// ---- LOCATION GATE helpers (Boss order: app open par 100m check) ----
+// Gate ka GPS fix bhi punch coords ke liye lastFix me note hota hai
+export function noteGpsFix(lat: number, lng: number, at: number) {
+  lastFix = { lat, lng, at };
+}
+
+export async function getShopCenter(): Promise<{ lat: number; lng: number; radius: number }> {
+  return loadShopCenter(); // LOCKED center + config radius — kabhi null nahi
+}
+
+export function distanceToShopM(lat: number, lng: number, center: { lat: number; lng: number }): number {
+  return haversineM(lat, lng, center.lat, center.lng);
 }
 
 // Har sample: duty ON me GPS fix lo, radius check karo, state machine chalao.
-// Duty OFF -> open event turant close (log likho).
+// Bahar open event ka FireStore doc TURANT likha jata hai (status 'open') —
+// dashboard popup + stopwatch live. Duty OFF -> open event turant close.
 export async function sampleGeofence(profile: UserProfile, isOnDuty: boolean) {
   if (!profile.uid || profile.role === 'manager') return;
   if (!isOnDuty) {
     const st = readState(profile.uid);
     if (st) {
       writeState(null);
-      await writeOutsideLog(profile.uid, profile.name, st, st.lastAt).catch(() => {});
+      await closeOutsideEvent(profile.uid, profile.name, st, st.lastAt).catch(() => {});
     }
     return;
   }
@@ -144,7 +184,9 @@ export async function sampleGeofence(profile: UserProfile, isOnDuty: boolean) {
   const outside = haversineM(loc.lat, loc.lng, center.lat, center.lng) > center.radius;
   const st = readState(profile.uid);
   if (outside && !st) {
-    writeState({ uid: profile.uid, fromAt: loc.at, lastAt: loc.at, lat: loc.lat, lng: loc.lng, flags });
+    const fresh = { uid: profile.uid, fromAt: loc.at, lastAt: loc.at, lat: loc.lat, lng: loc.lng, flags };
+    writeState(fresh);
+    openOutsideEvent(profile.uid, profile.name, fresh); // LIVE popup doc
   } else if (outside && st) {
     st.lastAt = loc.at;
     st.lat = loc.lat;
@@ -154,7 +196,7 @@ export async function sampleGeofence(profile: UserProfile, isOnDuty: boolean) {
   } else if (!outside && st) {
     // wapas shop aaya -> event close + log
     writeState(null);
-    await writeOutsideLog(profile.uid, profile.name, st, loc.at).catch(() => {});
+    await closeOutsideEvent(profile.uid, profile.name, st, loc.at).catch(() => {});
   }
 }
 
@@ -164,6 +206,6 @@ export async function closeStaleOutsideEvent(profile: UserProfile) {
   const st = readState(profile.uid);
   if (st && Date.now() - st.lastAt > STALE_MS) {
     writeState(null);
-    await writeOutsideLog(profile.uid, profile.name, st, st.lastAt).catch(() => {});
+    await closeOutsideEvent(profile.uid, profile.name, st, st.lastAt).catch(() => {});
   }
 }

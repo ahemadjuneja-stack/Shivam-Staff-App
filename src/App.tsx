@@ -7,6 +7,7 @@ import { auth, db } from './firebase';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
+import LocationGate from './screens/LocationGate';
 import UpdatePopup from './components/UpdatePopup';
 import IntroScreen from './components/IntroScreen';
 import BrandHeader from './components/BrandHeader';
@@ -176,7 +177,13 @@ export default function App() {
             />
           ) : (
             <div className="text-slate-100 font-sans selection:bg-amber-500/30">
-              <HomeScreen profile={profile} onLogout={handleLogout} />
+              {/* LOCATION GATE (Boss order 2026-10-26): staff ko app open hote hi
+                  sab se pehle location permission + 100m shop-radius check —
+                  bahar = locked screen, andar = open + auto duty ON.
+                  Manager kahin se bhi open (gate skip, tracking chalti hai). */}
+              <LocationGate profile={profile}>
+                {() => <HomeScreen profile={profile} onLogout={handleLogout} />}
+              </LocationGate>
             </div>
           )}
         </main>

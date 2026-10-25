@@ -16,10 +16,10 @@ import {
 import { db } from '../firebase';
 import { UserProfile, PunchRecord, Task, CreditDoc, OutsideLog } from '../types';
 import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
-import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, starsFor, dailyCreditDelta, workedMinutesOnDay } from '../lib/credit';
+import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, clamp100, starsFor, dailyCreditDelta, workedMinutesOnDay } from '../lib/credit';
 import { reportDeviceAndLocation } from '../lib/reporting';
 import { sampleGeofence, closeStaleOutsideEvent, lastGpsFix, SAMPLE_MS } from '../lib/geofence';
-import { enqueueOutbox, flushOutbox, subscribeOutbox } from '../lib/sync';
+import { enqueueOutbox, flushOutbox } from '../lib/sync';
 import {
   calibrateFromServer,
   clockSnapshot,
@@ -33,6 +33,7 @@ import {
   MAX_SHIFT_MS
 } from '../lib/integrity';
 import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 'lucide-react';
+import { consumeAutoDutyRequest } from './LocationGate';
 
 // ============================================================
 // NEW HOME SCREEN (Boss order 2026-10-25 — demo screenshot style)
@@ -47,29 +48,19 @@ import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 
 //     - staff: sirf apne tasks (toUid) — koi aur nahi dekh sakta
 //   Completed: Done cards ya "Nil"
 //   Fixed branch avatars: ZS Patan / RR Godhra / SK Mangrol (Boss: abhi fixed)
-//   Polls (SOON) | Salary Info. (SOON) | On/Off duty toggle
-//   Task Msgs box — WhatsApp style chat feed (Boss order 2026-10-25):
-//   task events bubbles me — assign (manager naam, left) + verify (Done/Not Done
-//   + points), date chips, bubble time, ticks. Manager view: apne msgs right green.
+//   Polls (SOON) | Salary Info. (SOON) | Duty toggle (fixed bottom-RIGHT)
+//   TASK MSGS REMOVED (Boss 2026-10-26: "whatsapp jaisa task msg remove karo
+//   wo mujse galati se hua hai sirf task ka hi box sahi hai")
 // NO LOGOUT BUTTON (Boss: "app me koi logout button nahi hai") — hidden logout:
 //   staff name ko ~1s press & hold karo (design kuch nahi badalta).
+// AUTO DUTY ON (Boss 2026-10-26): location gate pass (100m andar) -> flag ->
+//   Home attendance load hote hi duty ON (staff only, dedupe-safe).
 // Unclear cheezo pe SOON chip (Boss: "dhire dhire sab samaj ajayga")
 // ============================================================
 
 interface HomeProps {
   profile: UserProfile;
   onLogout: () => void;
-}
-
-// WhatsApp-style task message bubble (Boss order: "Task msgs ke liye ek box whatsapp jaisa")
-interface TaskMsg {
-  key: string;
-  at: number;
-  sender: string; // staff view: manager ka naam (group-chat style label); manager view: ''
-  mine: boolean;  // manager view: apne bheje hue (right, green)
-  text: string;
-  meta: string;   // chhoti line: deadline / points
-  verify?: boolean; // verification bubble (bold)
 }
 
 // Fixed branch avatars (Boss: "Abhi fixed" — aage real branch data)
@@ -123,16 +114,6 @@ const fmtDur = (min: number): string => {
 // floor hours: "145H"
 const fmtH = (min: number): string => `${Math.floor(min / 60)}H`;
 
-// "10:32 AM" — WhatsApp bubble time
-const fmtTime = (ms: number): string => {
-  const d = new Date(ms);
-  let h = d.getHours();
-  const m = d.getMinutes();
-  const ap = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return `${h}:${String(m).padStart(2, '0')} ${ap}`;
-};
-
 export default function Home({ profile, onLogout }: HomeProps) {
   const isManager = profile.role === 'manager';
 
@@ -165,10 +146,10 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const [punches, setPunches] = useState<PunchRecord[]>([]);
   const [targetH, setTargetH] = useState<number>(FALLBACK_TARGET_H);
   const [, setTick] = useState(0);
-
-  // ---------- Sync guarantee UI (outbox pending count — amber dot on toggle) ----------
-  const [pendingSync, setPendingSync] = useState<number>(0);
-  useEffect(() => subscribeOutbox(setPendingSync), []);
+  // attendance snapshot pe baar aaya? (auto-duty race-safe decision ke liye)
+  const [attLoaded, setAttLoaded] = useState<boolean>(false);
+  // LOCATION GATE auto-duty request (100m andar pass) — mount par ek hi baar consume
+  const [gateDutyReq, setGateDutyReq] = useState<boolean>(() => consumeAutoDutyRequest());
 
   // ---------- Toast (SOON modules) ----------
   const [notice, setNotice] = useState<string | null>(null);
@@ -190,6 +171,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // ---------- Listeners: duty status ----------
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'staff_attendance', profile.uid), (docSnap) => {
+      setAttLoaded(true);
       if (docSnap.exists()) {
         const d = docSnap.data();
         setIsOnDuty(d.isOnDuty === true);
@@ -202,6 +184,17 @@ export default function Home({ profile, onLogout }: HomeProps) {
     });
     return () => unsub();
   }, [profile.uid]);
+
+  // ---------- AUTO DUTY ON (Boss order 2026-10-26: "100 mitter ke andar hai
+  // location me access de diya to automatically duty on ho jaani chahiye"):
+  // LocationGate pass -> flag -> attendance load hone ke BAAD decide (race-safe:
+  // duty already ON thi to kuch nahi karte, OFF thi to exactly ek 'in' punch).
+  useEffect(() => {
+    if (profile.role === 'manager' || !attLoaded || !gateDutyReq) return;
+    setGateDutyReq(false); // ek hi baar — koi repeat nahi
+    if (!isOnDuty) toggleDuty(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attLoaded, gateDutyReq, isOnDuty, profile.role]);
 
   // ---------- Listeners: punches (duty calc + credit hours) ----------
   useEffect(() => {
@@ -380,7 +373,15 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return () => window.clearInterval(t);
   }, [profile, isOnDuty]);
 
-  // ---------- OUTSIDE LOG cut (Boss: "manager NO dabade to points apne aap cut honge") ----------
+  // ---------- OUTSIDE LOG auto points (Boss STOPWATCH order 2026-10-26):
+  // har closed log ka outcome AUTOMATIC — koi manual credit editing nahi:
+  //   rejected (manager NO)            -> -10 (OUTSIDE_REJECT)
+  //   approved (manager YES)           -> no change (processed mark)
+  //   pending + allowedMin SET         -> on-time wapas (+5) / late (-10)
+  //   pending + allowedMin NOT set     -> -10 (bina bataye gaya = down)
+  // 'open' status = event abhi chal raha hai — skip. Atomic transaction se
+  // ek log se sirf EK baar cut/credit (double impossible). Purane build ke
+  // pending logs (bina closedAt) safe hain — sirf manager YES/NO se honge.
   useEffect(() => {
     if (profile.role === 'manager') return;
     const q = query(collection(db, 'outside_logs'), where('uid', '==', profile.uid));
@@ -388,17 +389,51 @@ export default function Home({ profile, onLogout }: HomeProps) {
       snap.docChanges().forEach((ch) => {
         if (ch.type !== 'added' && ch.type !== 'modified') return;
         const data = ch.doc.data() as OutsideLog;
-        if (data.status !== 'rejected' || data.cutApplied === true) return;
-        // atomic transaction — ek log se sirf EK baar cut (double-cut impossible)
+        if (data.status === 'open' || data.cutApplied === true) return;
+        if (data.status !== 'rejected' && data.status !== 'approved' && data.status !== 'pending') return;
+        if (data.status === 'pending' && !data.closedAt) return; // purana log — manager review only
+        // outcome decide (transaction ke andar re-confirm bhi hota hai)
+        let delta: number;
+        let reason: string;
+        if (data.status === 'rejected') {
+          delta = CREDIT_POINTS.OUTSIDE_REJECT;
+          reason = 'outside_reject';
+        } else if (data.status === 'approved') {
+          delta = 0;
+          reason = 'outside_approved';
+        } else if (typeof data.allowedMin === 'number' && data.allowedMin > 0) {
+          const onTime = (data.outsideMin || 0) <= data.allowedMin;
+          delta = onTime ? CREDIT_POINTS.OUTSIDE_ONTIME : CREDIT_POINTS.OUTSIDE_LATE;
+          reason = onTime ? 'outside_ontime' : 'outside_late';
+        } else {
+          delta = CREDIT_POINTS.OUTSIDE_LATE;
+          reason = 'outside_no_notice';
+        }
+        // atomic transaction — ek log se sirf EK baar apply (double-cut impossible)
         runTransaction(db, async (tx) => {
           const lref = doc(db, 'outside_logs', ch.doc.id);
           const ls = await tx.get(lref);
-          if (!ls.exists() || ls.data().status !== 'rejected' || ls.data().cutApplied === true) return;
+          if (!ls.exists() || ls.data().cutApplied === true) return;
+          const ld = ls.data();
+          if (ld.status === 'open') return;
+          if (ld.status === 'pending' && !ld.closedAt) return;
+          // transaction ke andar allowedMin FRESH padho — manager timer race-safe
+          let d2: number;
+          if (ld.status === 'rejected') d2 = CREDIT_POINTS.OUTSIDE_REJECT;
+          else if (ld.status === 'approved') d2 = 0;
+          else if (typeof ld.allowedMin === 'number' && ld.allowedMin > 0) {
+            d2 = (ld.outsideMin || 0) <= ld.allowedMin ? CREDIT_POINTS.OUTSIDE_ONTIME : CREDIT_POINTS.OUTSIDE_LATE;
+          } else d2 = CREDIT_POINTS.OUTSIDE_LATE;
           const cref = doc(db, 'credit_points', profile.uid);
           const cs = await tx.get(cref);
           const cur = cs.exists() ? Number(cs.data().taskScore) || 0 : 0;
-          tx.set(cref, { taskScore: cur + CREDIT_POINTS.OUTSIDE_REJECT, updatedAt: Date.now() }, { merge: true });
-          tx.update(lref, { cutApplied: true, cutPoints: CREDIT_POINTS.OUTSIDE_REJECT, cutAt: Date.now() });
+          tx.set(cref, { taskScore: clamp100(cur + d2), updatedAt: Date.now() }, { merge: true });
+          tx.update(lref, {
+            cutApplied: true,
+            cutPoints: d2,
+            cutReason: reason,
+            cutAt: Date.now()
+          });
         }).catch(() => {});
       });
     }, () => {});
@@ -598,43 +633,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
       setSaving(false);
     }
   };
-
-  // ---------- Task Msgs feed (WhatsApp style, tasks se derive — koi naya write nahi) ----------
-  const taskMsgs = useMemo<TaskMsg[]>(() => {
-    const msgs: TaskMsg[] = [];
-    [...tasks]
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .forEach((t) => {
-        msgs.push({
-          key: `${t.id}-a`,
-          at: t.createdAt,
-          sender: isManager ? '' : t.byName,
-          mine: isManager,
-          text: t.title,
-          meta: isManager
-            ? `To: ${t.toName} • Deadline: ${fmtDate(t.deadlineAt)}`
-            : `Deadline: ${fmtDate(t.deadlineAt)} (${t.days} day${t.days > 1 ? 's' : ''})`
-        });
-        if (t.verifiedAt) {
-          const pts =
-            t.pointsDelta !== undefined
-              ? t.pointsDelta >= 0
-                ? `+${t.pointsDelta} points`
-                : `${t.pointsDelta} points`
-              : '';
-          msgs.push({
-            key: `${t.id}-v`,
-            at: t.verifiedAt,
-            sender: isManager ? '' : t.byName,
-            mine: isManager,
-            verify: true,
-            text: `Task verified: ${t.status === 'completed' ? 'Done' : 'Not Done'}`,
-            meta: pts
-          });
-        }
-      });
-    return msgs.sort((a, b) => a.at - b.at);
-  }, [tasks, isManager]);
 
   // ---------- Task verify (manager tap -> English Yes/No dialog) ----------
   const handleVerify = (t: Task) => {
@@ -923,68 +921,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
         )}
       </div>
 
-      {/* TASK MSGS BOX — WhatsApp style chat feed (Boss order — WhatsApp look intact, premium shell) */}
-      <div className="relative z-10 mt-6">
-        <div className="mb-2.5 flex items-center justify-between">
-          <h2 className="text-[17px] font-semibold text-[#B7C5F0]">Task Msgs</h2>
-          <span className="sec-label">Live Feed</span>
-        </div>
-        <div className="overflow-hidden rounded-[24px] border border-white/10 shadow-[0_16px_44px_rgba(2,6,23,0.55)]">
-          <div className="flex items-center gap-2 border-b border-black/40 bg-[#1F2C34] px-4 py-2.5">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-            <span className="text-[10.5px] font-extrabold tracking-[0.16em] text-slate-300">TASK FEED</span>
-            <span className="ml-auto text-[9px] font-semibold text-slate-500">WhatsApp style • live</span>
-          </div>
-          <div className="chat-scroll max-h-[420px] overflow-y-auto bg-[#0B141A] px-3 py-3.5">
-            {taskMsgs.length === 0 ? (
-              <div className="py-6 text-center text-[13px] text-[#8A93A6]">No task messages yet.</div>
-            ) : (
-              taskMsgs.map((m, i) => {
-                const chip = i === 0 || fmtDate(taskMsgs[i - 1].at) !== fmtDate(m.at);
-                return (
-                  <div key={m.key}>
-                    {chip && (
-                      <div className="my-2.5 flex justify-center">
-                        <span className="rounded-lg bg-[#1D2B47]/80 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-[#8A93A6]">
-                          {fmtDate(m.at)}
-                        </span>
-                      </div>
-                    )}
-                    <div className={`flex pb-1.5 ${m.mine ? 'justify-end' : 'justify-start'}`}>
-                      <div
-                        className={`max-w-[85%] px-3 py-2 shadow-md ${
-                          m.mine
-                            ? 'bg-[#005C4B] rounded-2xl rounded-tr-sm'
-                            : 'bg-[#202C33] rounded-2xl rounded-tl-sm'
-                        }`}
-                      >
-                        {!m.mine && m.sender && (
-                          <div className="text-[11px] font-bold leading-tight text-[#53BDEB]">{m.sender}</div>
-                        )}
-                        <div
-                          className={`whitespace-pre-wrap break-words text-[13.5px] leading-snug ${
-                            m.verify ? 'font-semibold' : ''
-                          } ${m.mine ? 'text-[#E9FFEC]' : 'text-slate-100'}`}
-                        >
-                          {m.text}
-                        </div>
-                        {m.meta && <div className="mt-0.5 text-[10.5px] text-[#8696A0]">{m.meta}</div>}
-                        <div className="mt-0.5 flex items-center justify-end gap-1">
-                          <span className="text-[9.5px] text-[#8696A0]">{fmtTime(m.at)}</span>
-                          {m.mine && (
-                            <span className="text-[10px] font-bold leading-none text-[#53BDEB]">✓✓</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* FIXED branch avatars (Boss: abhi fixed — premium gradient rings) */}
       <div className="relative z-10 mt-6 flex items-start gap-5 overflow-x-auto border-t border-white/[0.08] pb-1 pt-5">
         {FIXED_BRANCHES.map((b, i) => (
@@ -1020,23 +956,15 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </button>
       </div>
 
-      {/* DUTY TOGGLE — FIXED bottom-LEFT (Boss order: left side adjust, app open
-          hote hi on/off, upar-neeche scroll na kare. Poore app me EK hi instance.
-          Same handlers/writes — ZERO logic change, sirf position.)
-          SYNC DOT (sync-guarantee): outbox me unconfirmed writes ho to amber
-          count — net aane par sync hote hi gayab.) */}
+      {/* DUTY TOGGLE — FIXED bottom-RIGHT (Boss order 2026-10-26: "button ko right
+          side me jane do", pehle left tha, usse pehle center). App open hote hi
+          visible, scroll na kare. Poore app me EK hi instance. Same handlers/writes
+          — ZERO logic change, sirf position. Sync number badge REMOVED (Boss:
+          "jitni baar dabate hai numbers aa raha hai uski zaroorat nahi"). */}
       <div
-        className="glass-inset fixed left-4 z-40 flex items-center gap-1 rounded-full p-1 shadow-[0_12px_40px_rgba(2,6,23,0.7)]"
+        className="glass-inset fixed right-4 z-40 flex items-center gap-1 rounded-full p-1 shadow-[0_12px_40px_rgba(2,6,23,0.7)]"
         style={{ bottom: 'calc(var(--sab) + 14px)' }}
       >
-        {pendingSync > 0 && (
-          <span
-            title="Syncing..."
-            className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-black text-slate-950 shadow-lg animate-pulse"
-          >
-            {pendingSync}
-          </span>
-        )}
         <button
           onClick={() => toggleDuty(true)}
           disabled={isOnDuty}

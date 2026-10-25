@@ -10,6 +10,8 @@ export const CREDIT_POINTS = {
   TASK_LATE: -5,      // manager YES + deadline ke baad complete
   TASK_REJECT: -10,   // manager NO (complete hone ke baad bhi NO = down)
   OUTSIDE_REJECT: -10, // outside log pe manager NO (shop ke kaam se bahar tha = auto cut)
+  OUTSIDE_ONTIME: 5,  // STOPWATCH order 2026-10-26: bahar gaya, bola hua time (allowedMin) se PEHLE wapas aaya = points up
+  OUTSIDE_LATE: -10,  // STOPWATCH order 2026-10-26: bola hua time me wapas NAHI aaya YA BINA BATAYE gaya = points down
   HOURS_ONTRACK: 10,  // monthly duty on-track (M. row delta >= 0)
   HOURS_BEHIND: -10   // monthly duty me peeche
 } as const;

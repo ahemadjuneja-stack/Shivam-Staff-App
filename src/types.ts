@@ -60,14 +60,17 @@ export interface OutsideLog {
   uid: string;
   name: string;
   fromAt: number;
-  toAt: number;
-  outsideMin: number;
+  toAt?: number;       // undefined = event OPEN (staff abhi bahar hai — live stopwatch)
+  outsideMin?: number;
   lat?: number;
   lng?: number;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'open' | 'pending' | 'approved' | 'rejected';
   createdAt: number;
+  closedAt?: number;   // two-phase flow: close payload ka marker (purane logs me nahi)
+  allowedMin?: number; // STOPWATCH order: manager ne dashboard se bola hua time set kiya
   cutApplied?: boolean;
   cutPoints?: number;
+  cutReason?: string;  // outside_reject / outside_approved / outside_ontime / outside_late / outside_no_notice
   cutAt?: number;
   opId?: string;       // sync-guarantee layer: replay-safe id (lib/sync.ts)
   flags?: string[];    // integrity: gps_teleport / gps_low_accuracy
