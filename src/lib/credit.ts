@@ -1,29 +1,35 @@
 // ============================================================
-// CREDIT POINTS ENGINE (Boss order 2026-10-25)
-// 0-100 scale, account start 0, auto up/down, live display, rank-based stars.
+// CREDIT POINTS ENGINE (Boss order 2026-10-25 + TUNE 2026-10-26)
+// "points 3-4 ya 5 hi down ya up karo, 10/10 points nahi kaat sakte"
+// "1 se 100 me points adjust rahe" — ek din me 10 galtiyan bhi score 0
+// NAHI karega (floor 1). Scale 1-100, auto up/down, rank-based stars.
 // ============================================================
 import { CreditDoc, PunchRecord } from '../types';
 
-// Point deltas — Boss ke rules (tune karne wale: sirf yahi numbers badlo)
+// Point deltas — Boss rule 2026-10-26: SIRF 3-5 range me koi bhi up/down.
+// (tune karne wale: sirf yahi numbers badlo, 3-5 se bahar mat jao)
 export const CREDIT_POINTS = {
-  TASK_EARLY: 10,     // manager YES + deadline se pehle/on-time complete
-  TASK_LATE: -5,      // manager YES + deadline ke baad complete
-  TASK_REJECT: -10,   // manager NO (complete hone ke baad bhi NO = down)
-  OUTSIDE_REJECT: -10, // outside log pe manager NO (shop ke kaam se bahar tha = auto cut)
-  OUTSIDE_ONTIME: 5,  // STOPWATCH order 2026-10-26: bahar gaya, bola hua time (allowedMin) se PEHLE wapas aaya = points up
-  OUTSIDE_LATE: -10,  // STOPWATCH order 2026-10-26: bola hua time me wapas NAHI aaya YA BINA BATAYE gaya = points down
-  HOURS_ONTRACK: 10,  // monthly duty on-track (M. row delta >= 0)
-  HOURS_BEHIND: -10   // monthly duty me peeche
+  TASK_EARLY: 5,      // manager YES + deadline se pehle/on-time complete = +5
+  TASK_LATE: -3,      // manager YES + deadline ke baad complete = -3
+  TASK_REJECT: -5,    // manager NO (complete hone ke baad bhi NO = down) = -5
+  OUTSIDE_REJECT: -5, // outside log pe manager NO (shop ke kaam se bahar tha) = -5
+  OUTSIDE_ONTIME: 5,  // STOPWATCH: bola hua time (allowedMin) se PEHLE wapas aaya = +5
+  OUTSIDE_LATE: -4,   // STOPWATCH: bola hua time me wapas NAHI aaya = -4
+  OUTSIDE_NO_NOTICE: -5, // bina bataye gaya (allowedMin set hi nahi hua) = -5
+  HOURS_ONTRACK: 5,   // monthly duty on-track (M. row delta >= 0) = +5
+  HOURS_BEHIND: -4    // monthly duty me peeche = -4
 } as const;
 
 // Ek manager ek staff pe max ACTIVE (pending) tasks — Boss rule
 export const MAX_ACTIVE_TASKS_PER_STAFF = 5;
 
-export const clamp100 = (n: number): number => Math.max(0, Math.min(100, Math.round(n)));
+// BOSS rule 2026-10-26: score kabhi 0 nahi gir sakta — floor 1 (1-100 range).
+// "Ek hi din me 10 galatiya ki to credit points 0 ho jayega — aise mat karo"
+export const clamp100 = (n: number): number => Math.max(1, Math.min(100, Math.round(n)));
 
 // Daily credit deltas — Boss order 2026-10-26 ("har roz badlega, staff time aur
 // behavior ke hisab se up/down"). Time component neeche; behavior pehle se hi
-// task verify points (+10/-5/-10) se flow karta hai. Tune karne wale: sirf yahi numbers badlo.
+// task verify points (3-5 range, Boss tune) se flow karta hai. Tune karne wale: sirf yahi numbers badlo.
 export const CREDIT_DAILY = {
   FULL_DAY: 10,   // worked >= daily target (poore din ka duty time)
   HALF_DAY: 5,    // worked >= half daily target

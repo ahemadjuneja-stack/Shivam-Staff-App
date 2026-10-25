@@ -375,10 +375,10 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
   // ---------- OUTSIDE LOG auto points (Boss STOPWATCH order 2026-10-26):
   // har closed log ka outcome AUTOMATIC — koi manual credit editing nahi:
-  //   rejected (manager NO)            -> -10 (OUTSIDE_REJECT)
-  //   approved (manager YES)           -> no change (processed mark)
-  //   pending + allowedMin SET         -> on-time wapas (+5) / late (-10)
-  //   pending + allowedMin NOT set     -> -10 (bina bataye gaya = down)
+  //   rejected (manager NO)            -> -5 (OUTSIDE_REJECT)
+  //   approved (manager YES)           -> 0 (kaam tha — no cut)
+  //   pending + allowedMin SET         -> on-time wapas (+5) / late (-4)
+  //   pending + allowedMin NOT set     -> -5 (bina bataye gaya = OUTSIDE_NO_NOTICE)
   // 'open' status = event abhi chal raha hai — skip. Atomic transaction se
   // ek log se sirf EK baar cut/credit (double impossible). Purane build ke
   // pending logs (bina closedAt) safe hain — sirf manager YES/NO se honge.
@@ -406,7 +406,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
           delta = onTime ? CREDIT_POINTS.OUTSIDE_ONTIME : CREDIT_POINTS.OUTSIDE_LATE;
           reason = onTime ? 'outside_ontime' : 'outside_late';
         } else {
-          delta = CREDIT_POINTS.OUTSIDE_LATE;
+          delta = CREDIT_POINTS.OUTSIDE_NO_NOTICE;
           reason = 'outside_no_notice';
         }
         // atomic transaction — ek log se sirf EK baar apply (double-cut impossible)
@@ -423,7 +423,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
           else if (ld.status === 'approved') d2 = 0;
           else if (typeof ld.allowedMin === 'number' && ld.allowedMin > 0) {
             d2 = (ld.outsideMin || 0) <= ld.allowedMin ? CREDIT_POINTS.OUTSIDE_ONTIME : CREDIT_POINTS.OUTSIDE_LATE;
-          } else d2 = CREDIT_POINTS.OUTSIDE_LATE;
+          } else d2 = CREDIT_POINTS.OUTSIDE_NO_NOTICE;
           const cref = doc(db, 'credit_points', profile.uid);
           const cs = await tx.get(cref);
           const cur = cs.exists() ? Number(cs.data().taskScore) || 0 : 0;

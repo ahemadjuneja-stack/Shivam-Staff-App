@@ -19,7 +19,7 @@ import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF } from '../lib/credit';
 //   deadline auto) — ek staff pe max 5 ACTIVE tasks (popup block)
 // - STAFF (worker/sales): SIRF apne tasks dikhte hain — kisne diya, dates, status
 // - VERIFY: manager tap -> English dialog "Is this task complete?" Yes/No
-//   Yes on-time +10 | Yes late -5 | No -10  (credit_points/{uid}.taskScore atomic)
+//   Yes on-time +5 | Yes late -3 | No -5   (credit_points/{uid}.taskScore atomic, Boss 3-5 rule)
 // - Visibility: task sirf usi staff ko dikhta hai jisko diya; verify sirf usi
 //   manager jo diya (queries byUid/toUid scoped)
 // ============================================================

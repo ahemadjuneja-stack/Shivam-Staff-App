@@ -3,22 +3,26 @@ import { fetchLocation } from '../lib/reporting';
 import { getShopCenter, distanceToShopM, noteGpsFix } from '../lib/geofence';
 
 // ============================================================
-// LOCATION GATE (Boss order 2026-10-26):
+// LOCATION GATE (Boss order 2026-10-26 + English screen 2026-10-26):
 // "App open hote hi sab se pehle location puchna chahiye... jab location
 //  access mile aur shop ke 100 mitter area me ho tabhi app open honi chahiye,
 //  agar location on kare aur shop se door hai to app open hona hi nahi chahiye"
 //
-//  STAFF (worker/sales):
+//  GATE SIRF STAFF (role 'worker') PE — Boss: "ye sirf staff mambers ke liye
+//  rules hai, salesman ke liye alag rule banege" — sales + manager KAHIN SE
+//  BHI open kar sakte hain (location tracking Home.tsx reportDeviceAndLocation
+//  se chalti hi hai).
+//
+//  STAFF (worker):
 //    1. App open -> TURANT navigator.geolocation permission prompt (sab se pehle)
 //    2. Permission + GPS fix -> distance vs BOSS-LOCKED shop center (lib/geofence)
 //    3. Inside radius (default 100m) -> app open + AUTO-DUTY-ON request
 //       (localStorage flag — Home.tsx utha ke duty ON karta hai)
-//    4. Outside radius -> LOCKED screen (Xm door) — auto-retry har 20s:
+//    4. Outside radius -> LOCKED screen ENGLISH me (Boss: "screen showing honi
+//       chahiye English me ke aap abhi shop par nahi hai is liye aap application
+//       sirf shop me open kar sakte hai") — auto-retry har 20s:
 //       shop wapas aate hi app KHUD khul jayegi
 //    5. Permission denied / GPS off -> instructions + Retry button
-//  MANAGER/ADMIN: koi gate nahi — kahin se bhi kabhi bhi app open
-//    (Boss: "Manager kabhi bhi kahi se bhi app open kar sakta hai") —
-//    location tracking Home.tsx reportDeviceAndLocation se chalti hi hai.
 // GPS ko net nahi chahiye — permission + GPS only.
 // ============================================================
 
@@ -56,8 +60,10 @@ interface LocationGateProps {
 }
 
 export default function LocationGate({ profile, children }: LocationGateProps) {
-  const isManager = profile.role === 'manager' || profile.role === 'admin';
-  const [state, setState] = useState<GateState>(isManager ? { kind: 'pass' } : { kind: 'checking' });
+  // GATE sirf staff ('worker') pe — sales ke alag rule banenge (Boss), manager
+  // kahin se bhi open karta hai. Dono bypass.
+  const gated = profile.role === 'worker';
+  const [state, setState] = useState<GateState>(gated ? { kind: 'checking' } : { kind: 'pass' });
   const [radius, setRadius] = useState<number>(100);
   const retryTimer = useRef<number | null>(null);
   const mounted = useRef(true);
@@ -110,12 +116,12 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   };
 
   useEffect(() => {
-    if (isManager) return; // manager kahin se bhi — koi gate nahi
+    if (!gated) return; // sales/manager — koi gate nahi, kahin se bhi open
     runCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isManager]);
+  }, [gated]);
 
-  if (isManager || state.kind === 'pass') {
+  if (!gated || state.kind === 'pass') {
     return <>{children({ lat: 0, lng: 0 })}</>;
   }
 
@@ -193,13 +199,15 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
               </svg>
             </div>
             <h2 className="text-[17px] font-bold text-white">App Locked</h2>
-            <p className="mt-2 text-[13px] leading-relaxed text-slate-300">
-              Aap shop se <b className="text-rose-300">{state.distM}m</b> door hain.
+            <p className="mt-2 text-[13.5px] leading-relaxed font-semibold text-slate-200">
+              You are not at the shop right now, so you can only open this application at the shop.
             </p>
-            <p className="mt-2 text-[12.5px] leading-relaxed text-slate-400">
-              Shivam Staff app sirf shop ke <b className="text-slate-200">{radius}m</b> area me hi
-              khulti hai. Shop wapas aayenge to app apne aap khul jayegi — check har 20 sec me
-              chal raha hai.
+            <p className="mt-2.5 text-[12.5px] leading-relaxed text-slate-400">
+              You are <b className="text-rose-300">{state.distM}m</b> away from the shop.
+              This application works only inside the <b className="text-slate-200">{radius}m</b> shop area.
+            </p>
+            <p className="mt-2 text-[12px] leading-relaxed text-slate-500">
+              When you reach the shop, the app will open automatically — location is re-checked every 20 seconds.
             </p>
             <div className="glass-inset mt-4 rounded-xl px-4 py-2.5 text-[10.5px] font-semibold text-slate-400">
               Shop: Shivam Store, Pushpak Plaza, Mangnath Rd, Junagadh
