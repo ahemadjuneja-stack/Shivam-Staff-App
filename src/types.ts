@@ -39,12 +39,16 @@ export interface Task {
 // CREDIT POINTS (Boss order 2026-10-25): 0-100, account banne par 0.
 // taskScore: verify deltas ka sum (transaction se atomic). hoursScore: monthly
 // duty on-track (+10) / peeche (-10) — staff ke apne app se update hota hai.
-// Total = clamp(taskScore + hoursScore, 0, 100), live dikhta hai.
+// dailyScore: har completed din ka duty-time delta (Boss order 2026-10-26) —
+// catch-up accrual lastCreditDay ke through dedupe hota hai ('YYYY-MM-DD').
+// Total = clamp(taskScore + hoursScore + dailyScore, 0, 100), live dikhta hai.
 // Stars RANK-based: sabse zyada total = 5 stars, sabse kam = 1 star.
 export interface CreditDoc {
   uid?: string;
   taskScore: number;
   hoursScore: number;
+  dailyScore?: number;
+  lastCreditDay?: string;
   updatedAt?: number;
 }
 

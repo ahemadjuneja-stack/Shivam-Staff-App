@@ -15,7 +15,7 @@ import {
 import { db } from '../firebase';
 import { UserProfile, PunchRecord, Task, CreditDoc } from '../types';
 import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
-import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, starsFor } from '../lib/credit';
+import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, starsFor, dailyCreditDelta, workedMinutesOnDay } from '../lib/credit';
 import { reportDeviceAndLocation } from '../lib/reporting';
 import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 'lucide-react';
 
@@ -259,11 +259,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return () => unsub();
   }, [profile.uid]);
 
-  const [allCredits, setAllCredits] = useState<{ uid: string; taskScore: number; hoursScore: number }[]>([]);
+  const [allCredits, setAllCredits] = useState<{ uid: string; taskScore: number; hoursScore: number; dailyScore: number }[]>([]);
   const [staffRoleMap, setStaffRoleMap] = useState<Record<string, string>>({});
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'credit_points'), (snap) => {
-      setAllCredits(snap.docs.map((d) => ({ uid: d.id, taskScore: Number(d.data().taskScore) || 0, hoursScore: Number(d.data().hoursScore) || 0 })));
+      setAllCredits(snap.docs.map((d) => ({ uid: d.id, taskScore: Number(d.data().taskScore) || 0, hoursScore: Number(d.data().hoursScore) || 0, dailyScore: Number(d.data().dailyScore) || 0 })));
     });
     getDocs(query(collection(db, 'users'), where('status', '==', 'active')))
       .then((s) => {
@@ -301,6 +301,48 @@ export default function Home({ profile, onLogout }: HomeProps) {
     if (creditDoc && (Number(creditDoc.hoursScore) || 0) === target) return;
     setDoc(doc(db, 'credit_points', profile.uid), { hoursScore: target, updatedAt: Date.now() }, { merge: true }).catch(() => {});
   }, [profile.role, profile.uid, profile.createdAt, punches, isOnDuty, targetH, creditDoc]);
+
+  // ---------- Daily credit accrual (Boss order 2026-10-26: har roz duty time ke hisab se up/down) ----------
+  // Worker only (hoursScore jaisa hi gating). Catch-up: lastCreditDay ke baad ke
+  // har COMPLETED din (yesterday tak) ka delta ek hi merge write me accumulate.
+  // lastCreditDay dedupe karta hai — koi din double-count nahi hota.
+  useEffect(() => {
+    if (profile.role !== 'worker') return;
+    const ymdOf = (dt: Date) =>
+      `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    const now = new Date();
+    const todayYmd = ymdOf(now);
+    const last = creditDoc?.lastCreditDay;
+    if (last === todayYmd) return;
+    let cursor: Date;
+    if (last) {
+      const [ly, lm, ld] = last.split('-').map(Number);
+      cursor = new Date(ly, lm - 1, ld + 1);
+    } else if (Number(profile.createdAt) > 0) {
+      const reg = new Date(Number(profile.createdAt));
+      cursor = new Date(reg.getFullYear(), reg.getMonth(), reg.getDate());
+    } else {
+      cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 31);
+    }
+    const earliest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 31);
+    if (cursor < earliest) cursor = earliest;
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const dailyTargetMin = (targetH * 60) / daysInMonth; // lib/duty.ts dailyRateMin jaisa
+    let accrual = 0;
+    let iter = 0;
+    while (cursor <= yesterday && iter < 31) {
+      accrual += dailyCreditDelta(workedMinutesOnDay(punches, ymdOf(cursor)), dailyTargetMin);
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
+      iter++;
+    }
+    if (iter === 0) return;
+    setDoc(
+      doc(db, 'credit_points', profile.uid),
+      { dailyScore: (Number(creditDoc?.dailyScore) || 0) + accrual, lastCreditDay: todayYmd, updatedAt: Date.now() },
+      { merge: true }
+    ).catch(() => {});
+  }, [profile.role, profile.uid, profile.createdAt, punches, targetH, creditDoc]);
 
   // ---------- Duty calc (demo strip) ----------
   const calc = useMemo(
@@ -468,7 +510,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
     .sort((a, b) => (b.verifiedAt || b.createdAt) - (a.verifiedAt || a.createdAt));
 
   return (
-    <div className="relative min-h-screen text-slate-100 px-4 pb-16">
+    <div className="relative min-h-screen text-slate-100 px-4 pb-28">
       {/* Ambient depth — premium feel (fixed glow orbs, layout untouched) */}
       <div className="ambient-orb -top-12 -right-16 h-64 w-64 bg-indigo-500/15" />
       <div className="ambient-orb top-[45%] -left-20 h-56 w-56 bg-amber-400/10" />
@@ -500,9 +542,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
             >
               {profile.name}
             </span>
-            <div className="mt-0.5 text-[10.5px] font-semibold tracking-wide text-slate-400">
-              {isManager ? 'Manager' : 'Team Member'}{profile.city ? ` • ${profile.city}` : ''}
-            </div>
           </div>
           {!isManager && (
             <div className="flex shrink-0 flex-col items-center">
@@ -518,13 +557,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
                   </defs>
                   <path d="M12 1.7l3.1 6.4 7 1-5 4.9 1.2 7-6.3-3.3-6.3 3.3 1.2-7-5-4.9 7-1z" />
                 </svg>
-                <span className="absolute text-[12.5px] font-black text-[#3B2302]">{creditInfo.total}</span>
+                <span className="absolute text-[13.5px] font-black text-[#3B2302]">{creditInfo.rank}</span>
               </div>
-              {creditInfo.of > 0 && (
-                <span className="mt-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-[0.14em] text-amber-300">
-                  RANK {creditInfo.rank}/{creditInfo.of}
-                </span>
-              )}
+              <span className="mt-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-2.5 py-0.5 text-[9px] font-extrabold tracking-wide text-amber-300">
+                Credit Points: {creditInfo.total}
+              </span>
             </div>
           )}
         </div>
@@ -830,30 +867,37 @@ export default function Home({ profile, onLogout }: HomeProps) {
           Salary Info.
           <span className="soon-badge absolute -top-1.5 -right-1 rounded-full border border-white/10 bg-[#101B31] px-1.5 py-px text-[8px] font-extrabold tracking-wider text-slate-400">SOON</span>
         </button>
-        <div className="glass-inset ml-auto flex items-center gap-1 rounded-full p-1">
-          <button
-            onClick={() => toggleDuty(true)}
-            disabled={attendanceLoading || isOnDuty}
-            className={`rounded-full px-5 py-2.5 text-[14px] font-extrabold transition active:scale-95 ${
-              isOnDuty
-                ? 'bg-emerald-400 text-slate-950 shadow-[0_0_16px_rgba(52,211,153,0.45)]'
-                : 'text-slate-400'
-            } ${attendanceLoading ? 'opacity-60' : ''}`}
-          >
-            ON
-          </button>
-          <button
-            onClick={() => toggleDuty(false)}
-            disabled={attendanceLoading || !isOnDuty}
-            className={`rounded-full px-5 py-2.5 text-[14px] font-extrabold transition active:scale-95 ${
-              !isOnDuty
-                ? 'bg-rose-500 text-white shadow-[0_0_16px_rgba(244,63,94,0.4)]'
-                : 'text-slate-400'
-            } ${attendanceLoading ? 'opacity-60' : ''}`}
-          >
-            OFF
-          </button>
-        </div>
+      </div>
+
+      {/* DUTY TOGGLE — FIXED bottom-center (Boss order 2026-10-26: app open hote hi
+          on/off kare, upar-neeche scroll na kare. Poore app me EK hi instance.
+          Same handlers/writes — ZERO logic change, sirf position.) */}
+      <div
+        className="glass-inset fixed left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-full p-1 shadow-[0_12px_40px_rgba(2,6,23,0.7)]"
+        style={{ bottom: 'calc(var(--sab) + 14px)' }}
+      >
+        <button
+          onClick={() => toggleDuty(true)}
+          disabled={attendanceLoading || isOnDuty}
+          className={`rounded-full px-5 py-2.5 text-[14px] font-extrabold transition active:scale-95 ${
+            isOnDuty
+              ? 'bg-emerald-400 text-slate-950 shadow-[0_0_16px_rgba(52,211,153,0.45)]'
+              : 'text-slate-400'
+          } ${attendanceLoading ? 'opacity-60' : ''}`}
+        >
+          ON
+        </button>
+        <button
+          onClick={() => toggleDuty(false)}
+          disabled={attendanceLoading || !isOnDuty}
+          className={`rounded-full px-5 py-2.5 text-[14px] font-extrabold transition active:scale-95 ${
+            !isOnDuty
+              ? 'bg-rose-500 text-white shadow-[0_0_16px_rgba(244,63,94,0.4)]'
+              : 'text-slate-400'
+          } ${attendanceLoading ? 'opacity-60' : ''}`}
+        >
+          OFF
+        </button>
       </div>
 
     </div>
