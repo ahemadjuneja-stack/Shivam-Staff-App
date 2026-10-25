@@ -1,4 +1,6 @@
-export type UserRole = 'worker' | 'sales';
+// 'manager' = dashboard se manager access mila (Boss order 2026-10-25: tasks assign/verify).
+// Firestore 'manager' | 'admin' dono is role me normalize hote hain (Auth/App maps).
+export type UserRole = 'worker' | 'sales' | 'manager';
 export type UserStatus = 'pending' | 'active' | 'rejected';
 
 export interface UserProfile {
@@ -10,6 +12,40 @@ export interface UserProfile {
   status: UserStatus;
   createdAt: number;
   approvedAt?: number;
+}
+
+// TASK SYSTEM (Boss order 2026-10-25):
+// - Manager dashboard se manager access lekar tasks assign karta hai
+// - Task SIRF usi staff ko dikhta hai jisko diya (toUid query); verify SIRF wahi manager (byUid)
+// - Ek manager ek staff ko max 5 ACTIVE task de sakta hai (pending count se block, popup)
+// - Verify tap -> English dialog "Is this task complete?" Yes/No
+//   Yes + deadline se pehle/on-time -> +10 | Yes + late -> -5 | No -> -10 (credit)
+export interface Task {
+  id?: string;
+  title: string;
+  byUid: string;        // kisne diya (manager uid)
+  byName: string;
+  toUid: string;        // kisko diya (staff uid)
+  toName: string;
+  startAt: number;      // start date (local midnight ms)
+  days: number;         // kitne din me khatam hoga
+  deadlineAt: number;   // end-of-day ms (start + days)
+  status: 'pending' | 'completed' | 'rejected';
+  createdAt: number;    // assign time
+  verifiedAt?: number;  // manager verify time (= completion proxy)
+  pointsDelta?: number; // credit me gaya delta (+10/-5/-10)
+}
+
+// CREDIT POINTS (Boss order 2026-10-25): 0-100, account banne par 0.
+// taskScore: verify deltas ka sum (transaction se atomic). hoursScore: monthly
+// duty on-track (+10) / peeche (-10) — staff ke apne app se update hota hai.
+// Total = clamp(taskScore + hoursScore, 0, 100), live dikhta hai.
+// Stars RANK-based: sabse zyada total = 5 stars, sabse kam = 1 star.
+export interface CreditDoc {
+  uid?: string;
+  taskScore: number;
+  hoursScore: number;
+  updatedAt?: number;
 }
 
 export interface ShopConfig {

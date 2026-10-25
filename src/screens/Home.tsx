@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   collection,
   query,
@@ -6,6 +6,7 @@ import {
   onSnapshot,
   addDoc,
   doc,
+  getDocs,
   setDoc,
   serverTimestamp
 } from 'firebase/firestore';
@@ -14,17 +15,21 @@ import {
   UserProfile,
   PunchRecord,
   WorkLog,
-  StarEvent
+  StarEvent,
+  CreditDoc
 } from '../types';
 import HisabScreen from './Hisab';
+import TasksScreen from './Tasks';
 import DutyTimeSection from '../components/DutyTimeSection';
+import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
+import { CREDIT_POINTS, totalOf, starsFor } from '../lib/credit';
 
 interface HomeProps {
   profile: UserProfile;
   onLogout: () => void;
 }
 
-type SectionType = 'home' | 'attendance' | 'worklog' | 'sales' | 'profile';
+type SectionType = 'home' | 'attendance' | 'worklog' | 'sales' | 'profile' | 'tasks';
 
 export default function Home({ profile, onLogout }: HomeProps) {
   const [activeSection, setActiveSection] = useState<SectionType>('home');
@@ -134,6 +139,61 @@ export default function Home({ profile, onLogout }: HomeProps) {
     });
     return () => unsub();
   }, [profile.uid]);
+
+  // ===================== CREDIT POINTS (Boss order 2026-10-25) =====================
+  // Own credit doc — live (0-100 = clamp(taskScore + hoursScore))
+  const [creditDoc, setCreditDoc] = useState<CreditDoc | null>(null);
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'credit_points', profile.uid), (snap) => {
+      setCreditDoc(snap.exists() ? ({ uid: snap.id, ...(snap.data() as Omit<CreditDoc, 'uid'>) }) : null);
+    });
+    return () => unsub();
+  }, [profile.uid]);
+
+  // Rank base: sab active staff (worker+sales) + unke credit docs (missing = 0)
+  const [allCredits, setAllCredits] = useState<{ uid: string; taskScore: number; hoursScore: number }[]>([]);
+  const [staffRoleMap, setStaffRoleMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'credit_points'), (snap) => {
+      setAllCredits(snap.docs.map((d) => ({ uid: d.id, taskScore: Number(d.data().taskScore) || 0, hoursScore: Number(d.data().hoursScore) || 0 })));
+    });
+    getDocs(query(collection(db, 'users'), where('status', '==', 'active')))
+      .then((s) => {
+        const m: Record<string, string> = {};
+        s.docs.forEach((d) => { m[d.id] = String((d.data() as any).role || 'worker'); });
+        setStaffRoleMap(m);
+      })
+      .catch(() => {});
+    return () => unsub();
+  }, []);
+
+  // Live totals + rank stars (top = 5 stars, bottom = 1 star — Boss rule)
+  const creditInfo = useMemo(() => {
+    const staffUids = Object.entries(staffRoleMap)
+      .filter(([, r]) => r === 'worker' || r === 'sales')
+      .map(([u]) => u);
+    const totals = new Map<string, number>();
+    staffUids.forEach((u) => totals.set(u, 0));
+    allCredits.forEach((c) => { if (totals.has(c.uid)) totals.set(c.uid, totalOf(c)); });
+    const sorted = [...totals.entries()].map(([uid, total]) => ({ uid, total })).sort((a, b) => b.total - a.total);
+    const myIdx = sorted.findIndex((e) => e.uid === profile.uid);
+    return {
+      total: myIdx >= 0 ? sorted[myIdx].total : totalOf(creditDoc),
+      stars: starsFor(sorted.map((e) => e.total), myIdx),
+      rank: myIdx + 1,
+      of: sorted.length
+    };
+  }, [allCredits, staffRoleMap, profile.uid, creditDoc]);
+
+  // hoursScore updater: staff ka apna app monthly duty on-track/peeche se set karta hai
+  // (lib/duty ka wahi baseline calc — single source of truth)
+  useEffect(() => {
+    if (profile.role !== 'worker') return;
+    const calc = computeDutyMin(punches, isOnDuty, FALLBACK_TARGET_H, profile.createdAt);
+    const target = calc.monthDeltaMin >= 0 ? CREDIT_POINTS.HOURS_ONTRACK : CREDIT_POINTS.HOURS_BEHIND;
+    if (creditDoc && (Number(creditDoc.hoursScore) || 0) === target) return;
+    setDoc(doc(db, 'credit_points', profile.uid), { hoursScore: target, updatedAt: Date.now() }, { merge: true }).catch(() => {});
+  }, [profile.role, profile.uid, profile.createdAt, punches, isOnDuty, creditDoc]);
 
   // Toggle Duty Status
   const toggleDuty = async () => {
@@ -258,6 +318,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
     );
   }
 
+  // Render Tasks Screen (Boss order 2026-10-25)
+  if (activeSection === 'tasks') {
+    return <TasksScreen profile={profile} slideCls={slideCls} />;
+  }
+
   // Render Work Log Screen
   if (activeSection === 'worklog') {
     return (
@@ -354,10 +419,27 @@ export default function Home({ profile, onLogout }: HomeProps) {
               <span className="text-[#8A93A6]">Account Status</span>
               <span className="font-bold text-[#34D399] uppercase">{profile.status}</span>
             </div>
-            <div className="flex justify-between py-1">
+            <div className="flex justify-between py-1 border-b border-[#1D2B47]/60">
               <span className="text-[#8A93A6]">Total Stars Earned</span>
               <span className="font-extrabold text-[#FBBF24]">★ {totalStars} Points</span>
             </div>
+            {profile.role !== 'manager' && (
+              <>
+                <div className="flex justify-between py-1 border-b border-[#1D2B47]/60">
+                  <span className="text-[#8A93A6]">Credit Points (Live)</span>
+                  <span className={`font-extrabold ${creditInfo.total >= 50 ? 'text-[#34D399]' : creditInfo.total >= 20 ? 'text-amber-300' : 'text-rose-400'}`}>
+                    {creditInfo.total} / 100
+                  </span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-[#1D2B47]/60">
+                  <span className="text-[#8A93A6]">Performance Stars</span>
+                  <span className="font-extrabold text-[#FBBF24] tracking-wider">
+                    {'★'.repeat(creditInfo.stars)}{'☆'.repeat(5 - creditInfo.stars)}
+                    <span className="text-[10px] text-[#8A93A6] font-semibold ml-1.5">#{creditInfo.rank} of {creditInfo.of}</span>
+                  </span>
+                </div>
+              </>
+            )}
           </div>
 
           <button
@@ -455,7 +537,22 @@ export default function Home({ profile, onLogout }: HomeProps) {
           <span className="text-white text-[15px] font-semibold">Profile</span>
         </button>
 
-        {/* 5. Hisab XL (SOON) */}
+        {/* 5. Tasks (Boss order 2026-10-25 — manager assign/verify, staff view) */}
+        <button
+          onClick={() => openSection('tasks')}
+          className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
+        >
+          <div className="h-[62px] w-[62px] rounded-[19px] bg-[#34D399]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+            <svg className="w-[34px] h-[34px] text-[#34D399]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+              <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+              <path d="m9 14 2 2 4-4" />
+            </svg>
+          </div>
+          <span className="text-white text-[15px] font-semibold">Tasks</span>
+        </button>
+
+        {/* 6. Hisab XL (SOON) */}
         <button
           onClick={() => showToast('Hisab XL module is coming soon!')}
           className="relative bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] opacity-80 hover:opacity-100 transition active:scale-[0.98]"
@@ -474,7 +571,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
           <span className="text-white text-[15px] font-semibold">Hisab XL</span>
         </button>
 
-        {/* 6. Polls (SOON) */}
+        {/* 7. Polls (SOON) */}
         <button
           onClick={() => showToast('Polls module is coming soon!')}
           className="relative bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] opacity-80 hover:opacity-100 transition active:scale-[0.98]"

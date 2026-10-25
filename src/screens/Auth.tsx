@@ -100,7 +100,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
             name: userData.name || 'Staff',
             mobile: userData.phone || userData.mobile || mobile.trim(),
             city: userData.city || 'Main',
-            role: (userData.role === 'sales' || userData.role === 'salesman' || userData.role === 'sales_manager') ? 'sales' : 'worker',
+            role: (userData.role === 'sales' || userData.role === 'salesman' || userData.role === 'sales_manager') ? 'sales' : (userData.role === 'manager' || userData.role === 'admin') ? 'manager' : 'worker',
             status: 'active',
             createdAt:
               typeof userData.createdAt === 'number'
