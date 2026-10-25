@@ -17,7 +17,19 @@ import { UserProfile } from '../types';
 const LS_KEY = 'shivam_outside_state_v1';
 export const SAMPLE_MS = 3 * 60 * 1000; // on-duty GPS sample har 3 min
 const STALE_MS = 30 * 60 * 1000; // app 30+ min band tha -> open event close
-export const DEFAULT_RADIUS_M = 100; // Boss: "100 mitter" (shop_config missing ho to)
+export const DEFAULT_RADIUS_M = 100; // Boss: "100 mitter"
+
+// ============================================================
+// BOSS-LOCKED SHOP CENTER (2026-10-26) — "Hamare shop ka exect location
+// ye hai... Aur koi nahi dena" — Google Maps link se exact coords:
+// Shivam Store, Pushpak Plaza, Shopping Centre, Mangnath Rd, near
+// Shriram Temple, Junagadh, Gujarat 362001.
+// YE AUTHORITATIVE CENTER HAI — remote config ka lat/lng AB IGNORE
+// (kisi aur location se geofence nahi chalega, galti/chaal dono band).
+// Radius hi config se aa sakta hai (operational tuning), center kabhi nahi.
+// ============================================================
+export const SHOP_CENTER_LOCKED = { lat: 21.5191279, lng: 70.4621545 } as const;
+export const SHOP_ADDRESS_LOCKED = 'Shivam Store, Pushpak Plaza, Mangnath Rd, Junagadh, Gujarat 362001';
 
 interface OutsideState {
   uid: string;
@@ -34,32 +46,25 @@ export function lastGpsFix(): { lat: number; lng: number; at: number } | null {
   return lastFix;
 }
 
-// Shop center: DUAL SOURCE (SYNC BUG FIX 2026-10-26):
-//   1. 'config/shop'  — dashboard Settings screen ("Settings & GPS") YAHI
-//      save karta hai (setDoc config/shop). Ye operational path hai.
-//   2. 'shop_config/default' — Task 39 ka documented path.
-// PEHLE SIRF shop_config/default padhta tha — dashboard config/shop me
-// likhta tha = COLLECTION MISMATCH, manager location set kare tab bhi
-// geofence kabhi active nahi hota. Ab dono check hote hain.
-// Missing dono -> tracking skip (false alarm nahi chahiye).
-let shopCenter: { lat: number; lng: number; radius: number } | null | undefined;
-async function loadShopCenter(): Promise<{ lat: number; lng: number; radius: number } | null> {
+// Shop center: BOSS-LOCKED coords (SHOP_CENTER_LOCKED) — hamesha available,
+// OFFLINE me bhi (koi config fetch wait nahi, geofence day-one LIVE).
+// Sirf radius remote config ('config/shop') se aata hai — 20..1000m valid
+// window ke saath, warna default 100m. Lat/lng config se KABHI nahi leta
+// (Boss: "Aur koi nahi dena" — center permanently locked).
+let shopCenter: { lat: number; lng: number; radius: number } | undefined;
+async function loadShopCenter(): Promise<{ lat: number; lng: number; radius: number }> {
   if (shopCenter !== undefined) return shopCenter;
-  const readDoc = async (coll: string, id: string) => {
-    try {
-      const snap = await getDoc(doc(db, coll, id));
-      if (!snap.exists()) return null;
-      const lat = Number(snap.data().lat);
-      const lng = Number(snap.data().lng);
+  let radius = DEFAULT_RADIUS_M;
+  try {
+    const snap = await getDoc(doc(db, 'config', 'shop'));
+    if (snap.exists()) {
       const r = Number(snap.data().radius);
-      const radius = Number.isFinite(r) && r > 0 ? r : DEFAULT_RADIUS_M;
-      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng, radius };
-    } catch {
-      // ignore — offline pe bhi cache se aa sakta hai
+      if (Number.isFinite(r) && r >= 20 && r <= 1000) radius = r;
     }
-    return null;
-  };
-  shopCenter = (await readDoc('config', 'shop')) ?? (await readDoc('shop_config', 'default'));
+  } catch {
+    // offline — locked center + default radius se kaam chalta hai
+  }
+  shopCenter = { lat: SHOP_CENTER_LOCKED.lat, lng: SHOP_CENTER_LOCKED.lng, radius };
   return shopCenter;
 }
 
@@ -130,8 +135,7 @@ export async function sampleGeofence(profile: UserProfile, isOnDuty: boolean) {
     }
     return;
   }
-  const center = await loadShopCenter();
-  if (!center) return; // shop location set nahi — skip, koi false record nahi
+  const center = await loadShopCenter(); // LOCKED center — kabhi null nahi
   const loc = await fetchLocation();
   if (!loc) return; // GPS fix nahi mila is sample me
   const prevFix = lastFix;
