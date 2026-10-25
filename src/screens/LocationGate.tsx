@@ -137,10 +137,10 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
                 <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
               </svg>
             </div>
-            <h2 className="text-[17px] font-bold text-white">Location Check</h2>
+            <h2 className="text-[17px] font-bold text-white">Checking Location</h2>
             <p className="mt-2 text-[12.5px] leading-relaxed text-slate-400">
-              Location permission allow karein — app sirf shop ke {radius}m area me khulti hai.
-              GPS ko internet nahi chahiye.
+              Please allow location access — this app opens only inside the {radius}m shop area.
+              GPS does not need internet.
             </p>
           </>
         )}
@@ -153,10 +153,10 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
                 <line x1="4" y1="4" x2="20" y2="20" />
               </svg>
             </div>
-            <h2 className="text-[17px] font-bold text-white">Location Permission Chahiye</h2>
+            <h2 className="text-[17px] font-bold text-white">Location Permission Required</h2>
             <p className="mt-2 text-[12.5px] leading-relaxed text-slate-400">
-              App ke liye location ALLOW karna zaroori hai. Browser/app settings me
-              location permission <b className="text-slate-200">Allow</b> karein, phir Retry dabayein.
+              Location access is required to use this app. Please set the location permission to
+              <b className="text-slate-200"> Allow</b> in your device/app settings, then tap Retry.
             </p>
             <button
               onClick={() => runCheck()}
@@ -176,10 +176,10 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
                 <circle cx="12" cy="12" r="8" opacity="0.35" />
               </svg>
             </div>
-            <h2 className="text-[17px] font-bold text-white">GPS Fix Nahi Mila</h2>
+            <h2 className="text-[17px] font-bold text-white">No GPS Signal</h2>
             <p className="mt-2 text-[12.5px] leading-relaxed text-slate-400">
-              Device ki <b className="text-slate-200">Location ON</b> karein (GPS mode: High accuracy),
-              khuli jagah me aayein, phir Retry dabayein.
+              Please turn <b className="text-slate-200">ON</b> your device Location (GPS mode: High accuracy),
+              move to an open area, then tap Retry.
             </p>
             <button
               onClick={() => runCheck()}
@@ -205,9 +205,6 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
             <p className="mt-2.5 text-[12.5px] leading-relaxed text-slate-400">
               You are <b className="text-rose-300">{state.distM}m</b> away from the shop.
               This application works only inside the <b className="text-slate-200">{radius}m</b> shop area.
-            </p>
-            <p className="mt-2 text-[12px] leading-relaxed text-slate-500">
-              When you reach the shop, the app will open automatically — location is re-checked every 20 seconds.
             </p>
             <div className="glass-inset mt-4 rounded-xl px-4 py-2.5 text-[10.5px] font-semibold text-slate-400">
               Shop: Shivam Store, Pushpak Plaza, Mangnath Rd, Junagadh

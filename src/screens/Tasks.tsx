@@ -218,7 +218,7 @@ export default function TasksScreen({ profile, slideCls }: TasksScreenProps) {
               rows={2}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g., Nail na khana saf karvana chhe"
+              placeholder="e.g., Clean and arrange the nail polish display rack"
               className="mt-1.5 w-full rounded-xl border border-[#1D2B47] bg-[#050C18] p-3 text-xs text-white placeholder-slate-500 focus:border-[#F59300] focus:outline-none"
             />
           </div>

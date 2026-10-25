@@ -104,7 +104,7 @@ export default function UpdatePopup() {
 
   const runCheck = async (manual: boolean) => {
     if (checkInFlight.current) {
-      if (manual) showToast('Update check chal raha hai...');
+      if (manual) showToast('Update check already in progress...');
       return;
     }
     checkInFlight.current = true;
@@ -153,7 +153,7 @@ export default function UpdatePopup() {
         // AB CHUP NAHI — exact wajah record, retries, aur ant me card
         setCheckDetail(res.detail || 'network fail');
         if (manual) {
-          showToast('Network se update check nahi ho paya — thodi der me dubara try karenge');
+          showToast('Could not check for updates — network issue. Retrying shortly.');
         }
         if (netRetries.current < NET_RETRY_MAX && phaseRef.current === 'idle') {
           netRetries.current += 1;
@@ -170,10 +170,10 @@ export default function UpdatePopup() {
       // reason 'none' — up-to-date
       setCheckDetail(null);
       if (manual) {
-        showToast(localVc ? `Aap latest version pe hi ho (v${localVc})` : 'Aap latest version pe hi ho');
+        showToast(localVc ? `You are on the latest version (v${localVc})` : 'You are on the latest version');
       }
     } catch {
-      if (manual) showToast('Update check nahi ho paya — thodi der me dubara try karenge');
+      if (manual) showToast('Could not check for updates — will retry shortly.');
     } finally {
       checkInFlight.current = false;
     }
@@ -226,12 +226,12 @@ export default function UpdatePopup() {
     // Manual check — header ke v-tag tap se (Staff ke paas hamesha ek rasta hai)
     const onManual = () => {
       if (phaseRef.current === 'downloading') {
-        showToast('Update download ho raha hai...');
+        showToast('Update is downloading...');
         return;
       }
       if (phaseRef.current === 'ready') {
         setDismissed(false);
-        showToast('Update ready hai — Install Karo');
+        showToast('Update is ready — tap Install');
         return;
       }
       runCheck(true);
@@ -323,7 +323,7 @@ export default function UpdatePopup() {
             <div className="flex items-center gap-2.5">
               <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-amber-400/30 border-t-amber-400"></span>
               <p className="flex-1 text-sm font-semibold text-white">
-                Naya Version {info?.versionCode ?? ''} Download Ho Raha Hai
+                Downloading New Version {info?.versionCode ?? ''}
               </p>
               <span className="text-xs font-bold text-amber-400">{progress}%</span>
             </div>
@@ -334,7 +334,7 @@ export default function UpdatePopup() {
               ></div>
             </div>
             <p className="mt-1.5 text-[11px] text-slate-400">
-              App band mat karo — khatam hone par Install ka popup aayega
+              Keep the app open — the Install popup will appear when the download finishes.
             </p>
           </div>
         </div>
@@ -349,12 +349,12 @@ export default function UpdatePopup() {
             <div>
               <h3 className="text-lg font-bold uppercase tracking-wider text-white">Download Fail</h3>
               <p className="mt-1 text-sm text-slate-400">
-                Network ki wajah se update download nahi ho paya. Adhoora download save rehta hai —
-                dubara koshish par wahin se aage badhega. Browser ki zaroorat nahi.
+                The update could not be downloaded due to a network issue. The partial download is
+                kept — retrying will resume from where it stopped. No browser needed.
               </p>
               {downloadErr && (
                 <p className="mt-2 rounded-lg border border-slate-700/50 bg-slate-900/80 px-3 py-2 text-left text-[10px] break-words text-slate-500">
-                  Wajah: {downloadErr}
+                  Reason: {downloadErr}
                 </p>
               )}
             </div>
@@ -363,13 +363,13 @@ export default function UpdatePopup() {
                 onClick={() => setDismissed(true)}
                 className="flex-1 rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-700"
               >
-                Baad Me
+                Later
               </button>
               <button
                 onClick={retryDownload}
                 className="flex-1 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-lg shadow-amber-500/20 transition-colors hover:bg-amber-600"
               >
-                Phir Se Koshish Karo
+                Try Again
               </button>
             </div>
           </div>
@@ -383,10 +383,10 @@ export default function UpdatePopup() {
               !
             </div>
             <div>
-              <h3 className="text-lg font-bold uppercase tracking-wider text-white">Update Check Nahi Ho Paya</h3>
+              <h3 className="text-lg font-bold uppercase tracking-wider text-white">Update Check Failed</h3>
               <p className="mt-1 text-sm text-slate-400">
-                App naya version check nahi kar saki — network ki dikkat lagti hai. WiFi/data check
-                karke dubara koshish karo.
+                The app could not check for a new version — there seems to be a network problem.
+                Please check your WiFi/data and try again.
               </p>
               {checkDetail && (
                 <p className="mt-2 rounded-lg border border-slate-700/50 bg-slate-900/80 px-3 py-2 text-left text-[10px] break-words text-slate-500">
@@ -399,13 +399,13 @@ export default function UpdatePopup() {
                 onClick={() => setDismissed(true)}
                 className="flex-1 rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-700"
               >
-                Baad Me
+                Later
               </button>
               <button
                 onClick={retryCheck}
                 className="flex-1 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-lg shadow-amber-500/20 transition-colors hover:bg-amber-600"
               >
-                Phir Se Koshish Karo
+                Try Again
               </button>
             </div>
           </div>
@@ -419,21 +419,22 @@ export default function UpdatePopup() {
               🚀
             </div>
             <div>
-              <h3 className="text-lg font-bold uppercase tracking-wider text-white">Update Ready Hai!</h3>
+              <h3 className="text-lg font-bold uppercase tracking-wider text-white">New Update Available!</h3>
               <p className="mt-1 text-sm text-slate-400">
-                Shivam Staff ka naya version{' '}
-                <span className="font-semibold text-amber-400">({info.versionName})</span> app ke andar
-                hi download ho chuka hai — bas install karna hai.
+                Hi Shivam Staff! New version{' '}
+                <span className="font-semibold text-amber-400">({info.versionName})</span> is available —
+                please update for a better experience. It is already downloaded inside the app and
+                ready to install.
               </p>
               <p className="mt-2 text-xs text-slate-500">
-                "Install Karo" dabao — Android confirm karega, Install dabate hi ho jayega. Data sab
-                safe rahega, kuch uninstall ya delete karne ki zaroorat nahi. Purana file app khud
-                clean kar deti hai.
+                Tap "Install" — Android will ask for confirmation, and the update will finish right
+                after. All your data stays safe; there is no need to uninstall or delete anything.
+                Old files are cleaned up automatically.
               </p>
               {installErr && (
                 <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
-                  Install allow nahi hua. Phone me ise kholo: Settings &rarr; Apps &rarr; Shivam Staff
-                  &rarr; "Install unknown apps" &rarr; Allow karo, phir "Phir Se Install Karo" dabao.
+                  Install permission was not granted. On your phone, open: Settings &rarr; Apps &rarr; Shivam Staff
+                  &rarr; "Install unknown apps" &rarr; Allow, then tap "Try Install Again".
                 </p>
               )}
             </div>
@@ -442,13 +443,13 @@ export default function UpdatePopup() {
                 onClick={() => setDismissed(true)}
                 className="flex-1 rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-700"
               >
-                Baad Me
+                Later
               </button>
               <button
                 onClick={doInstall}
                 className="flex-1 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-lg shadow-amber-500/20 transition-colors hover:bg-amber-600"
               >
-                {installErr ? 'Phir Se Install Karo' : 'Install Karo'}
+                {installErr ? 'Try Install Again' : 'Install'}
               </button>
             </div>
           </div>

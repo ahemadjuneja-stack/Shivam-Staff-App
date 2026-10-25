@@ -799,7 +799,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
               rows={2}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g., Nail na khana saf karvana chhe"
+              placeholder="e.g., Clean and arrange the nail polish display rack"
               className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:border-amber-300/50 focus:outline-none"
             />
           </div>
