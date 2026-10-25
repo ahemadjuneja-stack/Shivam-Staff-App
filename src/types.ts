@@ -52,6 +52,25 @@ export interface CreditDoc {
   updatedAt?: number;
 }
 
+// OUTSIDE LOG (Boss order 2026-10-26): net band ho to bhi app GPS se record
+// karta hai ke staff shop ke radius ke bahar kitni der tha. Net aane par
+// outside_logs me sync. Manager NO bole to staff app khud points cut karta
+// hai (cutApplied flag — double cut kabhi nahi).
+export interface OutsideLog {
+  uid: string;
+  name: string;
+  fromAt: number;
+  toAt: number;
+  outsideMin: number;
+  lat?: number;
+  lng?: number;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: number;
+  cutApplied?: boolean;
+  cutPoints?: number;
+  cutAt?: number;
+}
+
 export interface ShopConfig {
   name: string;
   lat: number;

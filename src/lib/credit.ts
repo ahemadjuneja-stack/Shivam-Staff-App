@@ -9,6 +9,7 @@ export const CREDIT_POINTS = {
   TASK_EARLY: 10,     // manager YES + deadline se pehle/on-time complete
   TASK_LATE: -5,      // manager YES + deadline ke baad complete
   TASK_REJECT: -10,   // manager NO (complete hone ke baad bhi NO = down)
+  OUTSIDE_REJECT: -10, // outside log pe manager NO (shop ke kaam se bahar tha = auto cut)
   HOURS_ONTRACK: 10,  // monthly duty on-track (M. row delta >= 0)
   HOURS_BEHIND: -10   // monthly duty me peeche
 } as const;

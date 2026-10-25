@@ -13,10 +13,11 @@ import {
   DocumentSnapshot
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { UserProfile, PunchRecord, Task, CreditDoc } from '../types';
+import { UserProfile, PunchRecord, Task, CreditDoc, OutsideLog } from '../types';
 import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
 import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, starsFor, dailyCreditDelta, workedMinutesOnDay } from '../lib/credit';
 import { reportDeviceAndLocation } from '../lib/reporting';
+import { sampleGeofence, closeStaleOutsideEvent, lastGpsFix, SAMPLE_MS } from '../lib/geofence';
 import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 'lucide-react';
 
 // ============================================================
@@ -147,7 +148,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
   // ---------- Duty state ----------
   const [isOnDuty, setIsOnDuty] = useState<boolean>(false);
-  const [attendanceLoading, setAttendanceLoading] = useState<boolean>(false);
   const [punches, setPunches] = useState<PunchRecord[]>([]);
   const [targetH, setTargetH] = useState<number>(FALLBACK_TARGET_H);
   const [, setTick] = useState(0);
@@ -344,6 +344,41 @@ export default function Home({ profile, onLogout }: HomeProps) {
     ).catch(() => {});
   }, [profile.role, profile.uid, profile.createdAt, punches, targetH, creditDoc]);
 
+  // ---------- GEOFENCE (Boss order 2026-10-26): net band ho to bhi GPS se
+  // outside record hota hai; net aane par outside_logs dashboard me sync ----------
+  useEffect(() => {
+    if (profile.role === 'manager') return;
+    closeStaleOutsideEvent(profile);
+    sampleGeofence(profile, isOnDuty);
+    const t = window.setInterval(() => sampleGeofence(profile, isOnDuty), SAMPLE_MS);
+    return () => window.clearInterval(t);
+  }, [profile, isOnDuty]);
+
+  // ---------- OUTSIDE LOG cut (Boss: "manager NO dabade to points apne aap cut honge") ----------
+  useEffect(() => {
+    if (profile.role === 'manager') return;
+    const q = query(collection(db, 'outside_logs'), where('uid', '==', profile.uid));
+    const unsub = onSnapshot(q, (snap) => {
+      snap.docChanges().forEach((ch) => {
+        if (ch.type !== 'added' && ch.type !== 'modified') return;
+        const data = ch.doc.data() as OutsideLog;
+        if (data.status !== 'rejected' || data.cutApplied === true) return;
+        // atomic transaction — ek log se sirf EK baar cut (double-cut impossible)
+        runTransaction(db, async (tx) => {
+          const lref = doc(db, 'outside_logs', ch.doc.id);
+          const ls = await tx.get(lref);
+          if (!ls.exists() || ls.data().status !== 'rejected' || ls.data().cutApplied === true) return;
+          const cref = doc(db, 'credit_points', profile.uid);
+          const cs = await tx.get(cref);
+          const cur = cs.exists() ? Number(cs.data().taskScore) || 0 : 0;
+          tx.set(cref, { taskScore: cur + CREDIT_POINTS.OUTSIDE_REJECT, updatedAt: Date.now() }, { merge: true });
+          tx.update(lref, { cutApplied: true, cutPoints: CREDIT_POINTS.OUTSIDE_REJECT, cutAt: Date.now() });
+        }).catch(() => {});
+      });
+    }, () => {});
+    return () => unsub();
+  }, [profile.uid, profile.role]);
+
   // ---------- Duty calc (demo strip) ----------
   const calc = useMemo(
     () => computeDutyMin(punches, isOnDuty, targetH, profile.createdAt),
@@ -365,33 +400,32 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const dayPct = Math.max(0, Math.min(100, calc.dailyRateMin > 0 ? (calc.workedTodayMin / calc.dailyRateMin) * 100 : 0));
   const monthPct = Math.max(0, Math.min(100, targetH > 0 ? (calc.workedMonthMin / (targetH * 60)) * 100 : 0));
 
-  // ---------- Duty toggle (On/Off pills) ----------
-  const toggleDuty = async (next: boolean) => {
-    if (attendanceLoading || next === isOnDuty) return;
-    try {
-      setAttendanceLoading(true);
-      await setDoc(doc(db, 'staff_attendance', profile.uid), {
-        uid: profile.uid,
-        name: profile.name,
-        isOnDuty: next,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      const newPunch: PunchRecord = {
-        uid: profile.uid,
-        name: profile.name,
-        type: next ? 'in' : 'out',
-        at: Date.now(),
-        lat: 22.3039,
-        lng: 70.8022,
-        dist: 10
-      };
-      await addDoc(collection(db, 'punches'), newPunch);
-      setIsOnDuty(next);
-    } catch (err: any) {
-      window.alert('Failed to update duty status: ' + err.message);
-    } finally {
-      setAttendanceLoading(false);
-    }
+  // ---------- Duty toggle (ON THE SPOT — Boss order 2026-10-26: "itna wait se
+  // monthly staff ke 1-2 min ka fark pad sakta hai") ----------
+  // Optimistic: tap hote hi EXACT time capture + UI turant flip — koi loading
+  // wait nahi. Firestore persistentLocalCache writes offline bhi queue karta
+  // hai — net band ho to bhi duty chalega, net aate hi dashboard pe sync.
+  const toggleDuty = (next: boolean) => {
+    if (next === isOnDuty) return;
+    const at = Date.now(); // tap ka EXACT time — duty minute yahi se count hote hai
+    setIsOnDuty(next);     // instant — button on the spot kaam karta hai
+    setDoc(doc(db, 'staff_attendance', profile.uid), {
+      uid: profile.uid,
+      name: profile.name,
+      isOnDuty: next,
+      updatedAt: serverTimestamp()
+    }, { merge: true }).catch((err: any) => window.alert('Duty status sync failed: ' + err.message));
+    const fix = lastGpsFix(); // GPS ko internet nahi chahiye — real coords jab available
+    const newPunch: PunchRecord = {
+      uid: profile.uid,
+      name: profile.name,
+      type: next ? 'in' : 'out',
+      at,
+      lat: fix?.lat ?? 22.3039,
+      lng: fix?.lng ?? 70.8022,
+      dist: 10
+    };
+    addDoc(collection(db, 'punches'), newPunch).catch((err: any) => window.alert('Punch sync failed: ' + err.message));
   };
 
   // ---------- Task assign (manager) ----------
@@ -869,32 +903,32 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </button>
       </div>
 
-      {/* DUTY TOGGLE — FIXED bottom-center (Boss order 2026-10-26: app open hote hi
-          on/off kare, upar-neeche scroll na kare. Poore app me EK hi instance.
+      {/* DUTY TOGGLE — FIXED bottom-LEFT (Boss order: left side adjust, app open
+          hote hi on/off, upar-neeche scroll na kare. Poore app me EK hi instance.
           Same handlers/writes — ZERO logic change, sirf position.) */}
       <div
-        className="glass-inset fixed left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-full p-1 shadow-[0_12px_40px_rgba(2,6,23,0.7)]"
+        className="glass-inset fixed left-4 z-40 flex items-center gap-1 rounded-full p-1 shadow-[0_12px_40px_rgba(2,6,23,0.7)]"
         style={{ bottom: 'calc(var(--sab) + 14px)' }}
       >
         <button
           onClick={() => toggleDuty(true)}
-          disabled={attendanceLoading || isOnDuty}
+          disabled={isOnDuty}
           className={`rounded-full px-5 py-2.5 text-[14px] font-extrabold transition active:scale-95 ${
             isOnDuty
               ? 'bg-emerald-400 text-slate-950 shadow-[0_0_16px_rgba(52,211,153,0.45)]'
               : 'text-slate-400'
-          } ${attendanceLoading ? 'opacity-60' : ''}`}
+          }`}
         >
           ON
         </button>
         <button
           onClick={() => toggleDuty(false)}
-          disabled={attendanceLoading || !isOnDuty}
+          disabled={!isOnDuty}
           className={`rounded-full px-5 py-2.5 text-[14px] font-extrabold transition active:scale-95 ${
             !isOnDuty
               ? 'bg-rose-500 text-white shadow-[0_0_16px_rgba(244,63,94,0.4)]'
               : 'text-slate-400'
-          } ${attendanceLoading ? 'opacity-60' : ''}`}
+          }`}
         >
           OFF
         </button>
