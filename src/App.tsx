@@ -21,7 +21,18 @@ export default function App() {
       return null;
     }
   });
-  const [loading, setLoading] = useState(true);
+  // BOOT FAST (Boss order 2026-10-25: "smoothly chalna chahiye"):
+  // cached profile localStorage me hai to spinner SKIP — Home turant render,
+  // onAuthStateChanged background me revalidate karega (logout/inactive ho
+  // to profile turant clear -> Auth screen). Firestore listeners bhi
+  // persistent cache se turant data denge (firebase.ts dekho).
+  const [loading, setLoading] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem('shivam_staff_logged_user');
+    } catch {
+      return true;
+    }
+  });
   const [watchUid, setWatchUid] = useState<string | null>(null);
 
   useEffect(() => {

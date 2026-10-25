@@ -13,9 +13,16 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Shivam Staff" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Aboreto&display=swap" rel="stylesheet">
+    <!-- CACHE/SPEED (Boss order 2026-10-25): Firebase servers ka connection
+         pehle se warm — first open pe TLS/DNS handshake ka wait kam -->
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+    <link rel="dns-prefetch" href="https://firestore.googleapis.com">
+    <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin>
+    <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
+    <link rel="preconnect" href="https://shivam-staff-app.web.app" crossorigin>
+    <!-- Aboreto font NETWORK se load NAHI hota — @fontsource/aboreto (main.tsx)
+         APK ke andar bundled hai. Purana fonts.googleapis.com stylesheet link
+         render-blocking tha (first open slow karta tha) — hata diya, font SAME. -->
   </head>
   <body class="bg-[#050914] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
     <div id="root"></div>
