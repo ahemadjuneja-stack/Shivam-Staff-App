@@ -190,16 +190,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
     }
   };
 
-  // Greeting & Date Formatting
-  const currentHour = new Date().getHours();
-  const timeGreeting = currentHour < 12 ? 'Good Morning' : currentHour < 17 ? 'Good Afternoon' : 'Good Evening';
-  const firstName = profile.name.trim().split(' ')[0] || 'Staff';
-  const formattedDate = new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'short'
-  });
-
   // Section title bar — koi back button nahi (phone ka back gesture use hota hai)
   const renderTopAppBar = (title: string) => (
     <div className="mb-5 flex items-center px-1">
@@ -390,49 +380,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
           {notice}
         </div>
       )}
-
-      {/* Header Row */}
-      <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.4)] flex items-center justify-between mb-5">
-        <div className="flex items-center gap-3">
-          {/* Avatar circle: 44px, fill #0C1628, 2px ring in orange #F59300, first letter in amber #FBBF24 */}
-          <div className="h-[44px] w-[44px] rounded-full bg-[#0C1628] ring-2 ring-[#F59300] flex items-center justify-center font-extrabold text-xl text-[#FBBF24] shrink-0">
-            {profile.name.charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <h2 className="text-white font-black uppercase text-base tracking-[2.5px] leading-tight">
-              SHIVAM STAFF
-            </h2>
-            <p className="text-[13px] text-[#8A93A6] font-medium leading-tight mt-0.5">
-              {profile.name}
-            </p>
-          </div>
-        </div>
-
-        {/* Duty Chip */}
-        <div>
-          {isOnDuty ? (
-            <div className="bg-[#10B981]/10 border border-[#10B981]/30 text-[#34D399] px-3 py-1.5 rounded-full text-[11px] font-bold tracking-wider flex items-center gap-1.5 shadow">
-              <span className="h-2 w-2 rounded-full bg-[#10B981] animate-pulse" />
-              <span>ON DUTY</span>
-            </div>
-          ) : (
-            <div className="bg-[#64748B]/12 border border-transparent text-[#94A3B8] px-3 py-1.5 rounded-full text-[11px] font-bold tracking-wider flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-[#64748B]" />
-              <span>OFF DUTY</span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Greeting & Date Section */}
-      <div className="px-1 mb-5">
-        <h1 className="text-xl font-extrabold text-white tracking-tight">
-          {timeGreeting}, <span className="text-white">{firstName}</span>
-        </h1>
-        <p className="text-sm text-[#8A93A6] font-medium mt-0.5">
-          {formattedDate}
-        </p>
-      </div>
 
       {/* DUTY TIME SECTION — Boss demo (TIME section): sirf worker role ko, sales ko nahi */}
       {profile.role === 'worker' && (

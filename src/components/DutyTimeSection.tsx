@@ -7,7 +7,7 @@ import { PunchRecord, UserProfile } from '../types';
 // DUTY TIME SECTION (Boss demo screenshot — TIME section only)
 // Row 1: D. Overtime/Undertime (green/red) | workedToday / dailyTarget : D
 // Row 2: M. Overtime/Undertime (green/red) | workedMonth / monthTarget : M
-// Recovery line (month undertime pe): roz itna extra karo to target poora
+// Recovery line: REMOVED per Boss order 2026-10-25 (calculation intact rahegi)
 //
 // RULES (Boss confirmed 2026-10-25):
 // - Shift start: 10:00 AM (fixed)
@@ -178,8 +178,6 @@ export default function DutyTimeSection({ profile, punches, isOnDuty }: DutyTime
   const dayFraction = `${fmtH(calc.workedTodayMin)} / ${Math.round(calc.dailyRateMin / 60)}H : D`;
   const monthFraction = `${fmtH(calc.workedMonthMin)} / ${Math.round(targetH)}H : M`;
 
-  const showRecovery = monthNegative && calc.extraPerDayMin > 1;
-
   return (
     <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] px-5 py-4 shadow-[0_8px_24px_rgba(0,0,0,0.4)] mb-5">
       {/* Row 1 — DAY */}
@@ -199,13 +197,6 @@ export default function DutyTimeSection({ profile, punches, isOnDuty }: DutyTime
         </span>
         <span className="text-[15px] font-extrabold text-[#38BDF8]">{monthFraction}</span>
       </div>
-
-      {/* Recovery line — month undertime pe (Boss: "itna overtime karoge to target tak pohach jaoge") */}
-      {showRecovery && (
-        <p className="mt-2 px-0.5 text-[11px] leading-relaxed text-[#FCA5A5]/80">
-          Month ke {Math.round(targetH)}H me se {fmtH(calc.workedMonthMin)} hi bhare — ab roz {fmtDur(calc.extraPerDayMin)} extra karo to target poora hoga.
-        </p>
-      )}
     </div>
   );
 }
