@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   collection,
   doc,
@@ -177,13 +177,20 @@ export default function TasksScreen({ profile, slideCls }: TasksScreenProps) {
     <div className={`min-h-screen text-slate-100 p-4 pb-14 ${slideCls}`}>
       {topBar}
 
-      {/* Manager: Assign Task opener */}
-      {isManager && !showForm && (
+      {/* Manager: Assign Task Button Polish */}
+      {isManager && (
         <button
-          onClick={() => setShowForm(true)}
-          className="w-full mb-5 rounded-[22px] border border-dashed border-[#2A3F68] bg-[#0C1628]/60 py-4 text-xs font-extrabold uppercase tracking-wider text-[#34D399] active:scale-[0.98] transition"
+          onClick={() => setShowForm(!showForm)}
+          className="w-full mb-5 rounded-xl bg-[#10B981] hover:bg-emerald-600 py-3.5 px-4 text-xs font-bold text-slate-950 flex items-center justify-center gap-2 shadow-lg active:scale-[0.98] transition"
         >
-          + Assign New Task
+          {showForm ? (
+            <span>× Close</span>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>
+              <span>+ New Task</span>
+            </>
+          )}
         </button>
       )}
 
@@ -266,7 +273,7 @@ export default function TasksScreen({ profile, slideCls }: TasksScreenProps) {
         </h3>
         {tasks.length === 0 ? (
           <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-6 text-center text-xs text-[#8A93A6]">
-            {isManager ? 'No tasks assigned yet. Tap "+ Assign New Task" to create one.' : 'No tasks assigned to you yet.'}
+            {isManager ? 'No tasks assigned yet. Tap "+ New Task" to create one.' : 'No tasks assigned to you yet.'}
           </div>
         ) : (
           tasks.map((t) => {
@@ -277,8 +284,8 @@ export default function TasksScreen({ profile, slideCls }: TasksScreenProps) {
                 key={t.id}
                 onClick={() => handleVerify(t)}
                 disabled={!canTap}
-                className={`w-full text-left bg-[#0C1628] border rounded-[22px] p-4 shadow-[0_4px_16px_rgba(0,0,0,0.3)] transition active:scale-[0.99] ${
-                  canTap ? 'border-[#2A3F68] hover:border-[#38BDF8]/60' : 'border-[#1D2B47]'
+                className={`w-full text-left bg-[#0C1628] border rounded-[22px] p-4 shadow-[0_4px_16px_rgba(0,0,0,0.3)] transition active:scale-[0.99] hover:bg-slate-800/40 ${
+                  canTap ? 'border-[#2A3F68]' : 'border-[#1D2B47]'
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
