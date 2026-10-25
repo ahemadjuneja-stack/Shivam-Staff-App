@@ -90,6 +90,10 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
           setMode('pending');
           return;
         }
+        if (userData.status === 'deleted') {
+          setErrorMsg('This account has been removed by the admin.');
+          return;
+        }
         if (userData.status === 'rejected') {
           setErrorMsg('Your registration has been rejected by admin.');
           return;
