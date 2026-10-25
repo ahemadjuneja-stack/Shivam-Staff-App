@@ -15,7 +15,14 @@ import { PunchRecord, UserProfile } from '../types';
 // - Daily UT = late aana (first-in vs 10:00)
 // - Weekly off: KOI NAHI — saare din working (dailyTarget = monthlyTarget / daysInMonth)
 // - Monthly target: dashboard/console se (duty_targets docs), fallback 235H
-// - Monthly expected-by-now = dailyRate x (kal raat tak ke din)
+// - Monthly expected-by-now = dailyRate x (kal raat tak ke din, BASELINE SE)
+// - BASELINE RULE (Boss order 2026-10-25, 181H bug fix): expected din ginna
+//   worker ke apne system-life se — registration (createdAt) ya uske baad —
+//   month start se NAHI. Punch system Oct 20 ko live hua tha; month-start
+//   counting se 100% perfect worker ko bhi ~144H+ bogas undertime dikh raha
+//   tha (23 din aise jab punch system exist hi nahi karta tha). Zero-punch
+//   worker ke liye registration date se count hota hai — koi gunjaish nahi:
+//   jis din se staff system me hai, us din se har din count hai.
 // - Sirf worker role ko dikhta hai (sales ko nahi) — Home.tsx me gated
 // ============================================================
 
@@ -146,7 +153,16 @@ export default function DutyTimeSection({ profile, punches, isOnDuty }: DutyTime
     }
 
     // --- MONTH delta ---
-    const expectedMin = dailyRateMin * (d - 1); // kal raat tak ka expectation
+    // BASELINE FIX (Boss order 2026-10-25): expectation sirf un dino pe jo is
+    // worker ke system-life me the. Registration se pehle ke din ginna =
+    // bogas deficit (181H bug). Baseline = registration day (createdAt);
+    // purane mahine se chalu worker pe clamp monthStart (full month count,
+    // koi loophole nahi). createdAt missing ho to monthStart = strict old way.
+    const createdAtMs = Number(profile.createdAt) || 0;
+    const regDayStart = createdAtMs > 0 ? new Date(createdAtMs).setHours(0, 0, 0, 0) : monthStart;
+    const effBaseline = Math.max(monthStart, regDayStart);
+    const expectedDays = Math.max(0, Math.round((todayStart - effBaseline) / 86400000));
+    const expectedMin = dailyRateMin * expectedDays; // kal raat tak ka expectation (baseline se)
     const monthDeltaMin = workedMonthMin - expectedMin;
     const remainingMin = Math.max(0, targetH * 60 - workedMonthMin);
     const daysLeft = Math.max(1, daysInMonth - d + 1); // aaj included
@@ -162,7 +178,7 @@ export default function DutyTimeSection({ profile, punches, isOnDuty }: DutyTime
       daysInMonth,
       firstInToday
     };
-  }, [punches, isOnDuty, targetH]);
+  }, [punches, isOnDuty, targetH, profile.createdAt]);
 
   // --- display states ---
   const dayPositive = calc.dayDeltaMin >= 0.5;
@@ -173,7 +189,9 @@ export default function DutyTimeSection({ profile, punches, isOnDuty }: DutyTime
   const dayLabel = calc.firstInToday === null
     ? 'D. Overtime: 0M'
     : `D. ${dayPositive ? 'Overtime' : 'Undertime'}: ${fmtDur(Math.abs(calc.dayDeltaMin))}`;
-  const monthLabel = `M. ${monthPositive ? 'Overtime' : 'Undertime'}: ${fmtDur(Math.abs(calc.monthDeltaMin))}`;
+  // zero-state bhi 'Overtime: 0M' neutral dikhe (day row jaisa) — kabhi
+  // 'Undertime: 0M' nahi; red sirf REAL deficit pe
+  const monthLabel = `M. ${monthNegative ? 'Undertime' : 'Overtime'}: ${fmtDur(Math.abs(calc.monthDeltaMin))}`;
 
   const dayFraction = `${fmtH(calc.workedTodayMin)} / ${Math.round(calc.dailyRateMin / 60)}H : D`;
   const monthFraction = `${fmtH(calc.workedMonthMin)} / ${Math.round(targetH)}H : M`;
