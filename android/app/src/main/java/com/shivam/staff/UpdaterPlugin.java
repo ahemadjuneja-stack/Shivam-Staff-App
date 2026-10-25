@@ -402,6 +402,17 @@ public class UpdaterPlugin extends Plugin {
                 call.reject("apk file missing");
                 return;
             }
+            // Android 8+: "Install unknown apps" allow na ho to seedha us app ki settings kholo
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                    && !getContext().getPackageManager().canRequestPackageInstalls()) {
+                Intent settings = new Intent(
+                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getContext().getPackageName()));
+                settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(settings);
+                call.reject("install_permission_needed");
+                return;
+            }
             Uri uri = FileProvider.getUriForFile(
                     getContext(),
                     getContext().getPackageName() + ".fileprovider",

@@ -10,8 +10,11 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+        // IMPORTANT: custom plugin ko super.onCreate() se PEHLE register karna zaroori hai.
+        // Capacitor Bridge super.onCreate() me ban jata hai — uske baad register karoge to
+        // plugin JS ko "not implemented" dikhta hai aur in-app update popup kabhi nahi aata.
         registerPlugin(UpdaterPlugin.class);
+        super.onCreate(savedInstanceState);
 
         // Edge-to-end: content status bar + nav bar ke NEECHE tak full screen.
         // Status/nav bar transparent — app ka navy theme hi unki jagah dikhta hai.
