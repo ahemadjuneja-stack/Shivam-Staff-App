@@ -10,7 +10,8 @@ import {
   setDoc,
   serverTimestamp,
   runTransaction,
-  DocumentSnapshot
+  DocumentSnapshot,
+  Timestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, PunchRecord, Task, CreditDoc, OutsideLog } from '../types';
@@ -18,6 +19,19 @@ import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
 import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, starsFor, dailyCreditDelta, workedMinutesOnDay } from '../lib/credit';
 import { reportDeviceAndLocation } from '../lib/reporting';
 import { sampleGeofence, closeStaleOutsideEvent, lastGpsFix, SAMPLE_MS } from '../lib/geofence';
+import { enqueueOutbox, flushOutbox, subscribeOutbox } from '../lib/sync';
+import {
+  calibrateFromServer,
+  clockSnapshot,
+  clockJumped,
+  heartbeatTouch,
+  detectDutyGap,
+  openInOf,
+  overMaxShift,
+  autoCloseDone,
+  markAutoCloseDone,
+  MAX_SHIFT_MS
+} from '../lib/integrity';
 import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 'lucide-react';
 
 // ============================================================
@@ -152,6 +166,10 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const [targetH, setTargetH] = useState<number>(FALLBACK_TARGET_H);
   const [, setTick] = useState(0);
 
+  // ---------- Sync guarantee UI (outbox pending count — amber dot on toggle) ----------
+  const [pendingSync, setPendingSync] = useState<number>(0);
+  useEffect(() => subscribeOutbox(setPendingSync), []);
+
   // ---------- Toast (SOON modules) ----------
   const [notice, setNotice] = useState<string | null>(null);
   const showToast = (msg: string) => {
@@ -172,7 +190,15 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // ---------- Listeners: duty status ----------
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'staff_attendance', profile.uid), (docSnap) => {
-      if (docSnap.exists()) setIsOnDuty(docSnap.data().isOnDuty === true);
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        setIsOnDuty(d.isOnDuty === true);
+        // CLOCK CALIBRATION (integrity): server-resolved snapshot se real time
+        // anchor — is offset se pata chalta hai device clock kitna aage/peeche hai
+        if (!docSnap.metadata.hasPendingWrites && d.updatedAt && typeof (d.updatedAt as Timestamp).toMillis === 'function') {
+          calibrateFromServer((d.updatedAt as Timestamp).toMillis());
+        }
+      }
     });
     return () => unsub();
   }, [profile.uid]);
@@ -379,6 +405,82 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return () => unsub();
   }, [profile.uid, profile.role]);
 
+  // ---------- SYNC GUARANTEE (Boss order 2026-10-26): mount + net-wapas par
+  // outbox reconcile — lib/sync.ts module init me 'online' event + 90s interval
+  // bhi hai. Ye effect sirf mount-time flush trigger karta hai. ----------
+  useEffect(() => {
+    flushOutbox().catch(() => {});
+  }, [profile.uid]);
+
+  // ---------- DUTY HEARTBEAT + APP-CLOSE GAP (security — Boss: "staff har tarha
+  // ki koshish karega timing bypass ki"): ON duty me har 60s heartbeat (localStorage,
+  // net nahi chahiye). App 20 min+ silent raha (force-close/background) to reopen
+  // par duty_gaps log banta hai — dashboard manager ko dikhta hai. ----------
+  useEffect(() => {
+    if (profile.role === 'manager') return;
+    const check = () => {
+      if (isOnDuty) heartbeatTouch(profile.uid);
+      const gap = detectDutyGap(profile.uid, isOnDuty);
+      if (gap) {
+        const opId = `dg-${profile.uid}-${gap.fromAt}`;
+        const payload = {
+          opId,
+          uid: profile.uid,
+          name: profile.name,
+          fromAt: gap.fromAt,
+          toAt: gap.toAt,
+          gapMin: Math.max(1, Math.round((gap.toAt - gap.fromAt) / 60000)),
+          kind: 'app_closed' as const,
+          status: 'pending' as const,
+          createdAt: Date.now()
+        };
+        enqueueOutbox('duty_gap', payload, opId); // journal-first (sync guarantee)
+        addDoc(collection(db, 'duty_gaps'), payload).catch(() => {});
+      }
+    };
+    check();
+    const t = window.setInterval(check, 60 * 1000);
+    return () => window.clearInterval(t);
+  }, [profile, isOnDuty]);
+
+  // ---------- MAX SHIFT CAP (security): ON duty 16h+ (OFF bhool gaya / jaan
+  // boojh ke chhoda) -> auto out punch (auto:true, flags:['max_shift']) +
+  // attendance flip. Worked time unlimited na bade — business protection. ----------
+  useEffect(() => {
+    if (profile.role === 'manager' || !isOnDuty) return;
+    const openIn = openInOf(punches);
+    if (openIn === null || !overMaxShift(openIn, Date.now())) return;
+    if (autoCloseDone(openIn)) return;
+    markAutoCloseDone(openIn);
+    const at = openIn + MAX_SHIFT_MS; // capped end — 16h se aage credited NAHI
+    const cs = clockSnapshot();
+    const opId = `pn-${profile.uid}-${at}-auto`;
+    const fix = lastGpsFix();
+    const autoPunch: PunchRecord = {
+      uid: profile.uid,
+      name: profile.name,
+      type: 'out',
+      at,
+      lat: fix?.lat ?? 22.3039,
+      lng: fix?.lng ?? 70.8022,
+      dist: 10,
+      opId,
+      auto: true,
+      flags: ['max_shift'],
+      clockOffsetMs: cs.offsetMs,
+      clockSuspect: cs.suspect
+    };
+    enqueueOutbox('punch', autoPunch as unknown as object, opId);
+    addDoc(collection(db, 'punches'), autoPunch).catch(() => {});
+    setDoc(
+      doc(db, 'staff_attendance', profile.uid),
+      { uid: profile.uid, name: profile.name, isOnDuty: false, autoClosed: true, updatedAt: serverTimestamp() },
+      { merge: true }
+    ).catch(() => {});
+    enqueueOutbox('attendance', { uid: profile.uid, name: profile.name, isOnDuty: false }, `at-${opId}`);
+    setIsOnDuty(false);
+  }, [profile, isOnDuty, punches]);
+
   // ---------- Duty calc (demo strip) ----------
   const calc = useMemo(
     () => computeDutyMin(punches, isOnDuty, targetH, profile.createdAt),
@@ -403,29 +505,44 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // ---------- Duty toggle (ON THE SPOT — Boss order 2026-10-26: "itna wait se
   // monthly staff ke 1-2 min ka fark pad sakta hai") ----------
   // Optimistic: tap hote hi EXACT time capture + UI turant flip — koi loading
-  // wait nahi. Firestore persistentLocalCache writes offline bhi queue karta
-  // hai — net band ho to bhi duty chalega, net aate hi dashboard pe sync.
+  // wait nahi. SYNC-GUARANTEE: har write outbox journal me PEHLE record hota
+  // hai (opId ke saath) — Firestore cache evict / app data clear ho jaye to
+  // bhi reconcile layer write ko Firebase tak pohnchayegi (lib/sync.ts).
+  // INTEGRITY: har punch me clock offset + suspect flags embed — dashboard
+  // manager ko timing-tampering ka evidence milta hai (lib/integrity.ts).
   const toggleDuty = (next: boolean) => {
     if (next === isOnDuty) return;
     const at = Date.now(); // tap ka EXACT time — duty minute yahi se count hote hai
-    setIsOnDuty(next);     // instant — button on the spot kaam karta hai
-    setDoc(doc(db, 'staff_attendance', profile.uid), {
-      uid: profile.uid,
-      name: profile.name,
-      isOnDuty: next,
-      updatedAt: serverTimestamp()
-    }, { merge: true }).catch((err: any) => window.alert('Duty status sync failed: ' + err.message));
+    const cs = clockSnapshot();
+    const flags: string[] = [];
+    if (cs.suspect) flags.push('clock_offset');
+    if (clockJumped()) flags.push('clock_jump');
+    const opId = `pn-${profile.uid}-${at}-${next ? 'in' : 'out'}`;
     const fix = lastGpsFix(); // GPS ko internet nahi chahiye — real coords jab available
-    const newPunch: PunchRecord = {
+    const punch: PunchRecord = {
       uid: profile.uid,
       name: profile.name,
       type: next ? 'in' : 'out',
       at,
       lat: fix?.lat ?? 22.3039,
       lng: fix?.lng ?? 70.8022,
-      dist: 10
+      dist: 10,
+      opId,
+      serverEstAt: at + cs.offsetMs,
+      clockOffsetMs: cs.offsetMs,
+      clockSuspect: cs.suspect,
+      flags
     };
-    addDoc(collection(db, 'punches'), newPunch).catch((err: any) => window.alert('Punch sync failed: ' + err.message));
+    setIsOnDuty(next); // instant — button on the spot kaam karta hai
+    enqueueOutbox('punch', punch as unknown as Record<string, unknown>, opId);
+    enqueueOutbox('attendance', { uid: profile.uid, name: profile.name, isOnDuty: next }, `at-${opId}`);
+    addDoc(collection(db, 'punches'), punch).catch(() => {}); // silent — outbox retry karta hai
+    setDoc(doc(db, 'staff_attendance', profile.uid), {
+      uid: profile.uid,
+      name: profile.name,
+      isOnDuty: next,
+      updatedAt: serverTimestamp()
+    }, { merge: true }).catch(() => {});
   };
 
   // ---------- Task assign (manager) ----------
@@ -905,11 +1022,21 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
       {/* DUTY TOGGLE — FIXED bottom-LEFT (Boss order: left side adjust, app open
           hote hi on/off, upar-neeche scroll na kare. Poore app me EK hi instance.
-          Same handlers/writes — ZERO logic change, sirf position.) */}
+          Same handlers/writes — ZERO logic change, sirf position.)
+          SYNC DOT (sync-guarantee): outbox me unconfirmed writes ho to amber
+          count — net aane par sync hote hi gayab.) */}
       <div
         className="glass-inset fixed left-4 z-40 flex items-center gap-1 rounded-full p-1 shadow-[0_12px_40px_rgba(2,6,23,0.7)]"
         style={{ bottom: 'calc(var(--sab) + 14px)' }}
       >
+        {pendingSync > 0 && (
+          <span
+            title="Syncing..."
+            className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-black text-slate-950 shadow-lg animate-pulse"
+          >
+            {pendingSync}
+          </span>
+        )}
         <button
           onClick={() => toggleDuty(true)}
           disabled={isOnDuty}

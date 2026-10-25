@@ -69,6 +69,23 @@ export interface OutsideLog {
   cutApplied?: boolean;
   cutPoints?: number;
   cutAt?: number;
+  opId?: string;       // sync-guarantee layer: replay-safe id (lib/sync.ts)
+  flags?: string[];    // integrity: gps_teleport / gps_low_accuracy
+}
+
+// DUTY GAP (integrity — Boss order 2026-10-26): ON duty me app 20 min+ band
+// raha (force-close/background) to reopen par ye log banta hai. Dashboard
+// manager ko dikhta hai — decision manager ka, auto deduct nahi.
+export interface DutyGap {
+  opId?: string;
+  uid: string;
+  name: string;
+  fromAt: number;
+  toAt: number;
+  gapMin: number;
+  kind: 'app_closed';
+  status: 'pending' | 'noted';
+  createdAt: number;
 }
 
 export interface ShopConfig {
@@ -97,6 +114,13 @@ export interface PunchRecord {
   lat: number;
   lng: number;
   dist: number;
+  // --- INTEGRITY (lib/integrity.ts — Boss anti-tamper layer) ---
+  opId?: string;          // replay-safe id (sync-guarantee + dedupe)
+  auto?: boolean;         // 16h max-shift auto-close punch
+  flags?: string[];       // clock_offset / clock_jump / max_shift
+  serverEstAt?: number;   // at + last known server offset (clock tamper proof)
+  clockOffsetMs?: number; // device vs server offset us waqt
+  clockSuspect?: boolean; // |offset| > 2 min
 }
 
 export interface WorkLog {

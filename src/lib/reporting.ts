@@ -1,5 +1,6 @@
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { outboxPendingCount, outboxFailedCount } from './sync';
 
 export function parseDeviceInfo(): { deviceModel: string; osVersion: string } {
   const ua = navigator.userAgent || '';
@@ -62,17 +63,18 @@ export async function fetchAppVersionInfo(): Promise<{ appVersion: string; appVe
   return { appVersion: '1.0.0', appVersionCode: 1 };
 }
 
-export async function fetchLocation(): Promise<{ lat: number; lng: number; at: number } | null> {
+export async function fetchLocation(): Promise<{ lat: number; lng: number; at: number; accuracy?: number } | null> {
   try {
     if ('geolocation' in navigator) {
       const pos: any = await new Promise((resolve) => {
-        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000 });
+        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000, enableHighAccuracy: true });
       });
       if (pos && pos.coords) {
         return {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
-          at: Date.now()
+          at: Date.now(),
+          accuracy: typeof pos.coords.accuracy === 'number' ? pos.coords.accuracy : undefined
         };
       }
     }
@@ -94,7 +96,13 @@ export async function reportDeviceAndLocation(uid: string) {
       osVersion,
       appVersion,
       appVersionCode,
-      lastSeenAt: Date.now()
+      lastSeenAt: Date.now(),
+      // SYNC HEALTH (Boss: dashboard ko pata ho ke device kitna synced hai):
+      syncHealth: {
+        pending: outboxPendingCount(),   // outbox me abhi bhi Confirm-pending writes
+        failed: outboxFailedCount(),     // 6 tries ke baad bhi unconfirmed
+        at: Date.now()
+      }
     };
     if (loc) {
       payload.lastLocation = loc;

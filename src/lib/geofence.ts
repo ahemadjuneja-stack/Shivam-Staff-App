@@ -10,6 +10,8 @@
 import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { fetchLocation } from './reporting';
+import { enqueueOutbox } from './sync';
+import { teleportFlag, lowAccuracyFlag } from './integrity';
 import { UserProfile } from '../types';
 
 const LS_KEY = 'shivam_outside_state_v1';
@@ -23,36 +25,42 @@ interface OutsideState {
   lastAt: number; // aakhri outside proof
   lat: number;
   lng: number;
+  flags?: string[]; // integrity: gps_teleport / gps_low_accuracy
 }
 
 // Aakhri GPS fix — duty punch me real coords ke liye (GPS offline bhi chalta hai)
-let lastFix: { lat: number; lng: number } | null = null;
-export function lastGpsFix(): { lat: number; lng: number } | null {
+let lastFix: { lat: number; lng: number; at: number } | null = null;
+export function lastGpsFix(): { lat: number; lng: number; at: number } | null {
   return lastFix;
 }
 
-// Shop center: shop_config/default (lat, lng, radius). Manager dashboard se
-// set karega. Missing -> tracking skip (false alarm nahi chahiye).
+// Shop center: DUAL SOURCE (SYNC BUG FIX 2026-10-26):
+//   1. 'config/shop'  — dashboard Settings screen ("Settings & GPS") YAHI
+//      save karta hai (setDoc config/shop). Ye operational path hai.
+//   2. 'shop_config/default' — Task 39 ka documented path.
+// PEHLE SIRF shop_config/default padhta tha — dashboard config/shop me
+// likhta tha = COLLECTION MISMATCH, manager location set kare tab bhi
+// geofence kabhi active nahi hota. Ab dono check hote hain.
+// Missing dono -> tracking skip (false alarm nahi chahiye).
 let shopCenter: { lat: number; lng: number; radius: number } | null | undefined;
 async function loadShopCenter(): Promise<{ lat: number; lng: number; radius: number } | null> {
   if (shopCenter !== undefined) return shopCenter;
-  try {
-    const snap = await getDoc(doc(db, 'shop_config', 'default'));
-    if (snap.exists()) {
+  const readDoc = async (coll: string, id: string) => {
+    try {
+      const snap = await getDoc(doc(db, coll, id));
+      if (!snap.exists()) return null;
       const lat = Number(snap.data().lat);
       const lng = Number(snap.data().lng);
       const r = Number(snap.data().radius);
       const radius = Number.isFinite(r) && r > 0 ? r : DEFAULT_RADIUS_M;
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        shopCenter = { lat, lng, radius };
-        return shopCenter;
-      }
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng, radius };
+    } catch {
+      // ignore — offline pe bhi cache se aa sakta hai
     }
-  } catch {
-    // ignore — offline pe bhi cache se aa sakta hai
-  }
-  shopCenter = null;
-  return null;
+    return null;
+  };
+  shopCenter = (await readDoc('config', 'shop')) ?? (await readDoc('shop_config', 'default'));
+  return shopCenter;
 }
 
 // dono points ke beech distance (meters)
@@ -87,11 +95,14 @@ function writeState(st: OutsideState | null) {
   }
 }
 
-// Event close -> outside_logs me write (persistent cache: offline me bhi
-// queue hota hai, net aate hi dashboard ko dikhega — koi throw nahi)
+// Event close -> outside_logs me write. SYNC-GUARANTEE: write se PEHLE
+// outbox journal (opId ke saath) — cache evict/app data clear ho jaye to
+// bhi reconcile layer is log ko Firebase tak pohnchayegi (lib/sync.ts).
 async function writeOutsideLog(uid: string, name: string, st: OutsideState, toAt: number) {
   const outsideMin = Math.max(1, Math.round((toAt - st.fromAt) / 60000));
-  await addDoc(collection(db, 'outside_logs'), {
+  const opId = `ol-${uid}-${st.fromAt}`;
+  const payload = {
+    opId,
     uid,
     name,
     fromAt: st.fromAt,
@@ -100,8 +111,11 @@ async function writeOutsideLog(uid: string, name: string, st: OutsideState, toAt
     lat: st.lat,
     lng: st.lng,
     status: 'pending',
+    flags: st.flags || [],
     createdAt: Date.now()
-  });
+  };
+  enqueueOutbox('outside_log', payload, opId); // JOURNAL FIRST
+  await addDoc(collection(db, 'outside_logs'), payload).catch(() => {}); // offline = cache queue
 }
 
 // Har sample: duty ON me GPS fix lo, radius check karo, state machine chalao.
@@ -120,15 +134,18 @@ export async function sampleGeofence(profile: UserProfile, isOnDuty: boolean) {
   if (!center) return; // shop location set nahi — skip, koi false record nahi
   const loc = await fetchLocation();
   if (!loc) return; // GPS fix nahi mila is sample me
-  lastFix = { lat: loc.lat, lng: loc.lng };
+  const prevFix = lastFix;
+  lastFix = { lat: loc.lat, lng: loc.lng, at: loc.at };
+  const flags = [...teleportFlag(prevFix, loc), ...lowAccuracyFlag(loc.accuracy)];
   const outside = haversineM(loc.lat, loc.lng, center.lat, center.lng) > center.radius;
   const st = readState(profile.uid);
   if (outside && !st) {
-    writeState({ uid: profile.uid, fromAt: loc.at, lastAt: loc.at, lat: loc.lat, lng: loc.lng });
+    writeState({ uid: profile.uid, fromAt: loc.at, lastAt: loc.at, lat: loc.lat, lng: loc.lng, flags });
   } else if (outside && st) {
     st.lastAt = loc.at;
     st.lat = loc.lat;
     st.lng = loc.lng;
+    if (flags.length) st.flags = [...(st.flags || []), ...flags.filter((f) => !(st.flags || []).includes(f))];
     writeState(st);
   } else if (!outside && st) {
     // wapas shop aaya -> event close + log
