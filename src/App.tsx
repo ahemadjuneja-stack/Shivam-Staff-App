@@ -40,7 +40,7 @@ export default function App() {
                 name: data.name || 'Staff',
                 mobile: data.phone || data.mobile || '',
                 city: data.city || 'Main',
-                role: (data.role === 'sales' || data.role === 'salesman' || data.role === 'sales_manager') ? 'sales' : 'worker',
+                role: (data.role === 'admin' || data.role === 'owner' || data.role === 'boss') ? 'admin' : (data.role === 'sales' || data.role === 'salesman' || data.role === 'sales_manager') ? 'sales' : 'worker',
                 status: 'active',
                 createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
               };
@@ -64,7 +64,7 @@ export default function App() {
                     name: d.name || 'Staff',
                     mobile: d.phone || d.mobile || phoneFromEmail,
                     city: d.city || 'Main',
-                    role: (d.role === 'sales' || d.role === 'salesman' || d.role === 'sales_manager') ? 'sales' : 'worker',
+                    role: (d.role === 'admin' || d.role === 'owner' || d.role === 'boss') ? 'admin' : (d.role === 'sales' || d.role === 'salesman' || d.role === 'sales_manager') ? 'sales' : 'worker',
                     status: 'active',
                     createdAt: typeof d.createdAt === 'number' ? d.createdAt : (typeof d.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now())
                   };
@@ -103,7 +103,7 @@ export default function App() {
           name: data.name || 'Staff',
           mobile: data.phone || data.mobile || '',
           city: data.city || 'Main',
-          role: (data.role === 'sales' || data.role === 'salesman' || data.role === 'sales_manager') ? 'sales' : 'worker',
+          role: (data.role === 'admin' || data.role === 'owner' || data.role === 'boss') ? 'admin' : (data.role === 'sales' || data.role === 'salesman' || data.role === 'sales_manager') ? 'sales' : 'worker',
           status: 'active',
           createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
         };
