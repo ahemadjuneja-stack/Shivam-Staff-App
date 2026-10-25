@@ -16,6 +16,8 @@ import { db } from '../firebase';
 import { UserProfile, PunchRecord, Task, CreditDoc } from '../types';
 import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
 import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, starsFor } from '../lib/credit';
+import { reportDeviceAndLocation } from '../lib/reporting';
+import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 'lucide-react';
 
 // ============================================================
 // NEW HOME SCREEN (Boss order 2026-10-25 — demo screenshot style)
@@ -60,6 +62,24 @@ const FIXED_BRANCHES = [
   { initials: 'ZS', city: 'Patan Gujarat' },
   { initials: 'RR', city: 'Godhra, Gujarat' },
   { initials: 'SK', city: 'Mangrol, Gujarat' }
+];
+
+// Premium meta chip (Task Date / Duration / By) — glass inset
+function MetaChip({ icon: Icon, label, value }: { icon: typeof CalendarDays; label: string; value: string }) {
+  return (
+    <span className="glass-inset inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10.5px]">
+      <Icon className="h-3 w-3 text-slate-500" />
+      <span className="font-medium text-slate-500">{label}:</span>
+      <span className="font-bold text-slate-200">{value}</span>
+    </span>
+  );
+}
+
+// Branch avatar ring gradients (premium — fixed branches, Boss: abhi fixed)
+const BRANCH_RINGS = [
+  'linear-gradient(135deg, #F5B93F, #E8912D)',
+  'linear-gradient(135deg, #4C9EFF, #6366F1)',
+  'linear-gradient(135deg, #34D399, #0D9488)'
 ];
 
 // "20-10-26" — demo ka date format
@@ -117,6 +137,13 @@ export default function Home({ profile, onLogout }: HomeProps) {
     }, 900);
   };
   useEffect(() => cancelPress, []);
+
+  // ---------- Device & location reporting (dashboard StaffDetail ke liye — silent, no UI) ----------
+  useEffect(() => {
+    reportDeviceAndLocation(profile.uid);
+    const t = window.setInterval(() => reportDeviceAndLocation(profile.uid), 5 * 60 * 1000);
+    return () => window.clearInterval(t);
+  }, [profile.uid]);
 
   // ---------- Duty state ----------
   const [isOnDuty, setIsOnDuty] = useState<boolean>(false);
@@ -292,6 +319,10 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const dayFraction = `${fmtH(calc.workedTodayMin)} / ${Math.round(calc.dailyRateMin / 60)}H : D`;
   const monthFraction = `${fmtH(calc.workedMonthMin)} / ${Math.round(targetH)}H : M`;
 
+  // Meter percentages (0-100, derived — demo data unchanged, sirf visual)
+  const dayPct = Math.max(0, Math.min(100, calc.dailyRateMin > 0 ? (calc.workedTodayMin / calc.dailyRateMin) * 100 : 0));
+  const monthPct = Math.max(0, Math.min(100, targetH > 0 ? (calc.workedMonthMin / (targetH * 60)) * 100 : 0));
+
   // ---------- Duty toggle (On/Off pills) ----------
   const toggleDuty = async (next: boolean) => {
     if (attendanceLoading || next === isOnDuty) return;
@@ -437,66 +468,121 @@ export default function Home({ profile, onLogout }: HomeProps) {
     .sort((a, b) => (b.verifiedAt || b.createdAt) - (a.verifiedAt || a.createdAt));
 
   return (
-    <div className="min-h-screen text-slate-100 px-4 pb-16">
+    <div className="relative min-h-screen text-slate-100 px-4 pb-16">
+      {/* Ambient depth — premium feel (fixed glow orbs, layout untouched) */}
+      <div className="ambient-orb -top-12 -right-16 h-64 w-64 bg-indigo-500/15" />
+      <div className="ambient-orb top-[45%] -left-20 h-56 w-56 bg-amber-400/10" />
+
       {/* Toast (SOON modules) */}
       {notice && (
         <div
-          className="fixed left-1/2 z-50 -translate-x-1/2 bg-[#1D2B47] border border-[#38BDF8]/40 text-white text-xs px-4 py-2.5 rounded-full shadow-2xl animate-fade-in"
+          className="glass-card fixed left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2.5 text-xs font-semibold text-slate-100 shadow-2xl intro-rise"
           style={{ top: 'calc(var(--sat) + 58px)' }}
         >
           {notice}
         </div>
       )}
 
-      {/* HEADER ROW — staff name (gold, long-press = hidden logout) + star badge */}
-      <div className="flex items-center justify-end gap-2.5 pb-3">
-        <span
-          className="select-none text-[17px] font-bold text-[#FBBF24]"
-          onTouchStart={startPress}
-          onTouchEnd={cancelPress}
-          onTouchMove={cancelPress}
-          onMouseDown={startPress}
-          onMouseUp={cancelPress}
-          onMouseLeave={cancelPress}
-          onContextMenu={(e) => e.preventDefault()}
-        >
-          {profile.name}
-        </span>
-        {!isManager && (
-          <div className="relative flex h-11 w-11 items-center justify-center">
-            <svg viewBox="0 0 24 24" className="h-11 w-11 text-[#F59300] drop-shadow-[0_2px_6px_rgba(245,147,0,0.35)]" fill="currentColor">
-              <path d="M12 1.7l3.1 6.4 7 1-5 4.9 1.2 7-6.3-3.3-6.3 3.3 1.2-7-5-4.9 7-1z" />
-            </svg>
-            <span className="absolute text-[12px] font-black text-[#3B2302]">{creditInfo.total}</span>
+      {/* HEADER HERO — brand eyebrow + staff name (gold, long-press = hidden logout) + star badge */}
+      <div className="intro-rise relative z-10">
+        <div className="glass-card flex items-center justify-between gap-3 rounded-[26px] px-5 py-4">
+          <div className="min-w-0">
+            <div className="shivam-silver shivam-silver-shine-slow text-[9px] font-bold uppercase tracking-[0.34em]">Shivam Staff</div>
+            <span
+              className="gold-text mt-0.5 block select-none truncate text-[22px] font-bold leading-tight"
+              onTouchStart={startPress}
+              onTouchEnd={cancelPress}
+              onTouchMove={cancelPress}
+              onMouseDown={startPress}
+              onMouseUp={cancelPress}
+              onMouseLeave={cancelPress}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              {profile.name}
+            </span>
+            <div className="mt-0.5 text-[10.5px] font-semibold tracking-wide text-slate-400">
+              {isManager ? 'Manager' : 'Team Member'}{profile.city ? ` • ${profile.city}` : ''}
+            </div>
           </div>
-        )}
+          {!isManager && (
+            <div className="flex shrink-0 flex-col items-center">
+              <div className="relative flex h-14 w-14 items-center justify-center">
+                <div className="star-glow absolute inset-0 rounded-full bg-amber-400/25 blur-md" />
+                <svg viewBox="0 0 24 24" className="h-14 w-14 drop-shadow-[0_2px_8px_rgba(245,147,0,0.45)]" fill="url(#homeStarGold)">
+                  <defs>
+                    <linearGradient id="homeStarGold" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%" stopColor="#FFD97A" />
+                      <stop offset="55%" stopColor="#F5B93F" />
+                      <stop offset="100%" stopColor="#E8912D" />
+                    </linearGradient>
+                  </defs>
+                  <path d="M12 1.7l3.1 6.4 7 1-5 4.9 1.2 7-6.3-3.3-6.3 3.3 1.2-7-5-4.9 7-1z" />
+                </svg>
+                <span className="absolute text-[12.5px] font-black text-[#3B2302]">{creditInfo.total}</span>
+              </div>
+              {creditInfo.of > 0 && (
+                <span className="mt-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-[0.14em] text-amber-300">
+                  RANK {creditInfo.rank}/{creditInfo.of}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* DUTY STRIP — compact 2 rows (worker only, jaisa pehle) */}
+      {/* DUTY STRIP — glass overview (worker only, same 2 rows jaisa demo) */}
       {profile.role === 'worker' && (
-        <div className="border-y border-[#2A3F68]/60 py-2.5 mb-4">
-          <div className="flex items-center justify-between py-1">
-            <span className={`text-[15px] font-extrabold tracking-tight ${dayPositive ? 'text-[#34D399]' : dayNegative ? 'text-[#FB7185]' : 'text-[#8A93A6]'}`}>
-              {dayLabel}
+        <div className="glass-card intro-rise intro-rise-delay relative z-10 mt-3 rounded-[26px] px-4 py-4">
+          <div className="mb-2.5 flex items-center justify-between px-1">
+            <span className="sec-label">Duty Overview</span>
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9.5px] font-extrabold tracking-[0.12em] ${
+              isOnDuty ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-300' : 'border-rose-300/25 bg-rose-400/10 text-rose-300'
+            }`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${isOnDuty ? 'animate-pulse bg-emerald-400' : 'bg-rose-400'}`} />
+              {isOnDuty ? 'ON DUTY' : 'OFF DUTY'}
             </span>
-            <span className="text-[15px] font-extrabold text-[#4C9EFF]">{dayFraction}</span>
           </div>
-          <div className="flex items-center justify-between py-1">
-            <span className={`text-[15px] font-extrabold tracking-tight ${monthPositive ? 'text-[#34D399]' : monthNegative ? 'text-[#FB7185]' : 'text-[#8A93A6]'}`}>
-              {monthLabel}
-            </span>
-            <span className="text-[15px] font-extrabold text-[#4C9EFF]">{monthFraction}</span>
+          <div className="glass-inset rounded-2xl px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className={`text-[14.5px] font-extrabold tracking-tight ${dayPositive ? 'text-emerald-300' : dayNegative ? 'text-rose-300' : 'text-slate-400'}`}>
+                {dayLabel}
+              </span>
+              <span className="text-[15px] font-extrabold tabular-nums text-[#5FA8FF]">{dayFraction}</span>
+            </div>
+            <div className="meter mt-2">
+              <span className="bg-gradient-to-r from-[#4C9EFF] to-[#7EB3FF]" style={{ width: `${dayPct}%` }} />
+            </div>
+          </div>
+          <div className="glass-inset mt-2 rounded-2xl px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className={`text-[14.5px] font-extrabold tracking-tight ${monthPositive ? 'text-emerald-300' : monthNegative ? 'text-rose-300' : 'text-slate-400'}`}>
+                {monthLabel}
+              </span>
+              <span className="text-[15px] font-extrabold tabular-nums text-[#5FA8FF]">{monthFraction}</span>
+            </div>
+            <div className="meter mt-2">
+              <span className="bg-gradient-to-r from-[#8B5CF6] to-[#C4B5FD]" style={{ width: `${monthPct}%` }} />
+            </div>
           </div>
         </div>
       )}
 
       {/* PENDING TASK heading (+ New Task for manager) */}
-      <div className="flex items-center justify-between mb-1">
-        <h2 className="text-[17px] font-semibold text-[#B7C5F0]">Pending Task :</h2>
+      <div className="relative z-10 mt-6 mb-2.5 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h2 className="text-[17px] font-semibold text-[#B7C5F0]">Pending Task</h2>
+          <span className="rounded-full border border-sky-300/20 bg-sky-400/10 px-2 py-0.5 text-[10px] font-extrabold text-sky-300">
+            {pendingTasks.length}
+          </span>
+        </div>
         {isManager && (
           <button
             onClick={() => setShowForm((v) => !v)}
-            className="text-[11px] font-extrabold uppercase tracking-wider text-[#34D399] active:scale-95 transition"
+            className={`flex items-center rounded-full px-4 py-2 text-[11px] font-extrabold uppercase tracking-wider shadow-lg transition active:scale-95 ${
+              showForm
+                ? 'border border-white/10 bg-white/10 text-slate-200 shadow-none'
+                : 'bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 shadow-emerald-500/25'
+            }`}
           >
             {showForm ? '× Close' : '+ New Task'}
           </button>
@@ -505,13 +591,13 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
       {/* Assign form (manager only) */}
       {isManager && showForm && (
-        <div className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 shadow-[0_8px_24px_rgba(0,0,0,0.4)] mb-5 space-y-4">
+        <div className="glass-card intro-rise relative z-10 mb-5 space-y-4 rounded-[26px] p-5">
           <div>
-            <label className="text-xs font-semibold text-[#8A93A6]">Staff Member</label>
+            <label className="sec-label">Staff Member</label>
             <select
               value={toUid}
               onChange={(e) => setToUid(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-[#1D2B47] bg-[#050C18] p-3 text-xs text-white focus:border-[#F59300] focus:outline-none"
+              className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white focus:border-amber-300/50 focus:outline-none"
             >
               <option value="">— Select staff —</option>
               {staffList.map((s) => (
@@ -522,52 +608,53 @@ export default function Home({ profile, onLogout }: HomeProps) {
             </select>
           </div>
           <div>
-            <label className="text-xs font-semibold text-[#8A93A6]">Task Details</label>
+            <label className="sec-label">Task Details</label>
             <textarea
               rows={2}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g., Nail na khana saf karvana chhe"
-              className="mt-1.5 w-full rounded-xl border border-[#1D2B47] bg-[#050C18] p-3 text-xs text-white placeholder-slate-500 focus:border-[#F59300] focus:outline-none"
+              className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:border-amber-300/50 focus:outline-none"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-[#8A93A6]">Start Date</label>
+              <label className="sec-label">Start Date</label>
               <input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-[#1D2B47] bg-[#050C18] p-3 text-xs text-white focus:border-[#F59300] focus:outline-none"
+                className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white focus:border-amber-300/50 focus:outline-none"
               />
             </div>
             <div>
-              <label className="text-xs font-semibold text-[#8A93A6]">Complete In (Days)</label>
+              <label className="sec-label">Complete In (Days)</label>
               <input
                 type="number"
                 min={1}
                 value={days}
                 onChange={(e) => setDays(Number(e.target.value))}
-                className="mt-1.5 w-full rounded-xl border border-[#1D2B47] bg-[#050C18] p-3 text-xs text-white focus:border-[#F59300] focus:outline-none"
+                className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white focus:border-amber-300/50 focus:outline-none"
               />
             </div>
           </div>
-          <div className="rounded-xl bg-[#121F36] border border-[#1D2B47] px-4 py-3">
-            <span className="text-[11px] text-[#8A93A6] font-medium">Deadline: </span>
-            <span className="text-[11px] font-bold text-[#4C9EFF]">{fmtDate(deadlineAt)}</span>
-            <span className="text-[11px] text-[#8A93A6]"> (within {Math.max(1, Math.floor(days) || 1)} day(s) from {fmtDate(localDayStart(startDate))})</span>
+          <div className="glass-inset flex items-center justify-between rounded-xl px-4 py-3">
+            <span className="text-[11px] font-medium text-slate-400">Deadline</span>
+            <span className="text-[11px] font-extrabold text-[#5FA8FF]">
+              {fmtDate(deadlineAt)} <span className="font-medium text-slate-500">• within {Math.max(1, Math.floor(days) || 1)} day(s)</span>
+            </span>
           </div>
           <div className="flex gap-3">
             <button
               onClick={handleAssign}
               disabled={saving}
-              className="flex-1 rounded-xl bg-[#10B981] py-3 text-xs font-extrabold text-slate-950 shadow-lg disabled:opacity-50 transition active:scale-95"
+              className="flex-1 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 py-3 text-xs font-extrabold text-slate-950 shadow-lg shadow-emerald-500/25 disabled:opacity-50 transition active:scale-95"
             >
               {saving ? 'Assigning...' : 'Assign Task'}
             </button>
             <button
               onClick={() => setShowForm(false)}
-              className="rounded-xl bg-[#1D2B47] px-5 py-3 text-xs font-bold text-[#8A93A6] transition active:scale-95"
+              className="rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-xs font-bold text-slate-300 transition active:scale-95"
             >
               Cancel
             </button>
@@ -575,74 +662,92 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       )}
 
-      {/* Pending task cards — demo strip style */}
+      {/* Pending task cards — premium glass, status accent */}
       {pendingTasks.length === 0 ? (
-        <div className="border-b border-[#1D2B47]/70 py-4 text-[15px] text-[#8A93A6]">
-          {isManager ? 'No pending tasks. Tap "+ New Task" to assign one.' : 'No pending tasks.'}
+        <div className="relative z-10 rounded-2xl border border-dashed border-white/10 bg-white/[0.025] px-4 py-6 text-center">
+          <div className="text-[13.5px] font-medium text-slate-400">
+            {isManager ? 'No pending tasks. Tap "+ New Task" to assign one.' : 'No pending tasks. Enjoy your day!'}
+          </div>
         </div>
       ) : (
-        pendingTasks.map((t) => {
-          const canTap = isManager;
-          return (
-            <button
-              key={t.id}
-              onClick={() => handleVerify(t)}
-              disabled={!canTap}
-              className="w-full text-left border-b border-[#1D2B47]/70 py-3.5 active:opacity-80 transition"
-            >
-              <div className="text-[16px] font-medium text-[#7EB3FF] leading-snug">{t.title}</div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-300">
-                <span>Task Date: {fmtDate(t.startAt)}</span>
-                <span>Duration: {fmtDate(t.deadlineAt)}</span>
-                <span>{isManager ? `To: ${t.toName}` : `By: ${t.byName}`}</span>
-                <span>Status: <span className="font-bold text-[#34D399]">Pending</span></span>
-              </div>
-              {canTap && (
-                <div className="mt-1 text-[10px] font-bold text-[#4C9EFF]">Tap to verify →</div>
-              )}
-            </button>
-          );
-        })
+        <div className="relative z-10 space-y-2.5">
+          {pendingTasks.map((t) => {
+            const canTap = isManager;
+            return (
+              <button
+                key={t.id}
+                onClick={() => handleVerify(t)}
+                disabled={!canTap}
+                className="glass-card relative w-full overflow-hidden rounded-[20px] px-4 py-3.5 text-left transition active:scale-[0.985]"
+              >
+                <span className="absolute inset-y-0 left-0 w-[3.5px] bg-gradient-to-b from-sky-400 to-indigo-500" />
+                <div className="flex items-start justify-between gap-2.5 pl-2">
+                  <div className="text-[15.5px] font-semibold leading-snug text-[#7EB3FF]">{t.title}</div>
+                  <span className="shrink-0 rounded-full border border-amber-300/25 bg-amber-400/10 px-2.5 py-1 text-[9px] font-extrabold tracking-[0.12em] text-amber-300">
+                    PENDING
+                  </span>
+                </div>
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 pl-2">
+                  <MetaChip icon={CalendarDays} label="Task Date" value={fmtDate(t.startAt)} />
+                  <MetaChip icon={Timer} label="Duration" value={fmtDate(t.deadlineAt)} />
+                  <MetaChip icon={UserRound} label={isManager ? 'To' : 'By'} value={isManager ? t.toName : t.byName} />
+                </div>
+                {canTap && (
+                  <div className="mt-2 pl-2 text-[10px] font-extrabold tracking-wide text-[#4C9EFF]">Tap to verify →</div>
+                )}
+              </button>
+            );
+          })}
+        </div>
       )}
 
       {/* Completed / history — Done cards ya "Nil" */}
-      <div className="mt-1">
+      <div className="relative z-10 mt-6">
+        <h2 className="mb-2.5 text-[17px] font-semibold text-[#B7C5F0]">Completed Task</h2>
         {doneTasks.length === 0 ? (
-          <div className="border-b border-[#1D2B47]/70 py-3.5">
-            <div className="text-[16px] text-[#8A93A6]">Nil</div>
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[#8A93A6]">
-              <span>Task Date:</span>
-              <span>Duration:</span>
-              <span>By:</span>
-              <span>Status: <span className="font-bold text-slate-400">Done</span></span>
-            </div>
+          <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-4">
+            <div className="text-[15px] font-semibold text-slate-500">Nil</div>
+            <div className="mt-1 text-[10.5px] text-slate-600">Verified tasks will appear here with their result.</div>
           </div>
         ) : (
-          doneTasks.map((t) => (
-            <div key={t.id} className="border-b border-[#1D2B47]/70 py-3.5">
-              <div className="text-[16px] font-medium text-[#9FB3D9]/85 leading-snug">{t.title}</div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[#8A93A6]">
-                <span>Task Date: {fmtDate(t.startAt)}</span>
-                <span>Duration: {fmtDate(t.deadlineAt)}</span>
-                <span>{isManager ? `To: ${t.toName}` : `By: ${t.byName}`}</span>
-                <span>
-                  Status:{' '}
-                  <span className={`font-bold ${t.status === 'completed' ? 'text-slate-400' : 'text-[#FB7185]'}`}>
-                    {t.status === 'completed' ? 'Done' : 'Not Done'}
+          <div className="space-y-2.5">
+            {doneTasks.map((t) => (
+              <div key={t.id} className="glass-card rounded-[20px] px-4 py-3.5">
+                <div className="flex items-start justify-between gap-2.5">
+                  <div className="text-[15px] font-medium leading-snug text-[#9FB3D9]/85">{t.title}</div>
+                  <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[9px] font-extrabold tracking-[0.12em] ${
+                    t.status === 'completed'
+                      ? 'border-emerald-300/20 bg-emerald-400/10 text-emerald-300/90'
+                      : 'border-rose-300/25 bg-rose-400/10 text-rose-300'
+                  }`}>
+                    {t.status === 'completed' ? 'DONE' : 'NOT DONE'}
                     {t.pointsDelta !== undefined ? (t.pointsDelta >= 0 ? ` +${t.pointsDelta}` : ` ${t.pointsDelta}`) : ''}
                   </span>
-                </span>
+                </div>
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                  <MetaChip icon={CalendarDays} label="Task Date" value={fmtDate(t.startAt)} />
+                  <MetaChip icon={Timer} label="Duration" value={fmtDate(t.deadlineAt)} />
+                  <MetaChip icon={UserRound} label={isManager ? 'To' : 'By'} value={isManager ? t.toName : t.byName} />
+                </div>
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
 
-      {/* TASK MSGS BOX — WhatsApp style chat feed (Boss order) */}
-      <div className="mt-5">
-        <h2 className="text-[17px] font-semibold text-[#B7C5F0] mb-2">Task Msgs :</h2>
-        <div className="rounded-[22px] border border-[#1D2B47] bg-[#0B141A] shadow-[0_8px_24px_rgba(0,0,0,0.4)] overflow-hidden">
-          <div className="max-h-[420px] overflow-y-auto px-3 py-3.5">
+      {/* TASK MSGS BOX — WhatsApp style chat feed (Boss order — WhatsApp look intact, premium shell) */}
+      <div className="relative z-10 mt-6">
+        <div className="mb-2.5 flex items-center justify-between">
+          <h2 className="text-[17px] font-semibold text-[#B7C5F0]">Task Msgs</h2>
+          <span className="sec-label">Live Feed</span>
+        </div>
+        <div className="overflow-hidden rounded-[24px] border border-white/10 shadow-[0_16px_44px_rgba(2,6,23,0.55)]">
+          <div className="flex items-center gap-2 border-b border-black/40 bg-[#1F2C34] px-4 py-2.5">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+            <span className="text-[10.5px] font-extrabold tracking-[0.16em] text-slate-300">TASK FEED</span>
+            <span className="ml-auto text-[9px] font-semibold text-slate-500">WhatsApp style • live</span>
+          </div>
+          <div className="chat-scroll max-h-[420px] overflow-y-auto bg-[#0B141A] px-3 py-3.5">
             {taskMsgs.length === 0 ? (
               <div className="py-6 text-center text-[13px] text-[#8A93A6]">No task messages yet.</div>
             ) : (
@@ -692,53 +797,61 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       </div>
 
-      {/* FIXED branch avatars (Boss: abhi fixed — demo jaisa) */}
-      <div className="mt-5 border-t border-[#2A3F68]/60 pt-4 flex items-start gap-5 overflow-x-auto">
-        {FIXED_BRANCHES.map((b) => (
-          <div key={b.initials} className="flex flex-col items-center gap-1.5 min-w-[72px]">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#232E44] border border-[#31405C] text-[20px] font-bold text-slate-200">
-              {b.initials}
+      {/* FIXED branch avatars (Boss: abhi fixed — premium gradient rings) */}
+      <div className="relative z-10 mt-6 flex items-start gap-5 overflow-x-auto border-t border-white/[0.08] pb-1 pt-5">
+        {FIXED_BRANCHES.map((b, i) => (
+          <div key={b.initials} className="flex min-w-[76px] flex-col items-center gap-2">
+            <div className="rounded-full p-[2.5px]" style={{ background: BRANCH_RINGS[i % BRANCH_RINGS.length] }}>
+              <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-[#0B1526] text-[17px] font-bold tracking-wide text-slate-100">
+                {b.initials}
+              </div>
             </div>
-            <span className="text-[11px] font-medium text-slate-200 whitespace-nowrap">{b.city}</span>
+            <span className="whitespace-nowrap text-[10.5px] font-semibold text-slate-300">{b.city}</span>
           </div>
         ))}
-        <span className="ml-auto self-center text-2xl font-light text-[#4C9EFF] select-none">›</span>
+        <ChevronRight className="ml-auto h-6 w-6 self-center text-[#4C9EFF]" />
       </div>
 
       {/* BOTTOM ROW — Polls (SOON) | Salary Info. (SOON) | On/Off duty toggle */}
-      <div className="mt-5 flex flex-wrap items-center gap-3">
+      <div className="relative z-10 mt-6 flex flex-wrap items-center gap-3">
         <button
           onClick={() => showToast('Polls — coming soon!')}
-          className="relative rounded-full bg-[#0E2233] border border-[#1D2B47] px-6 py-3 text-[16px] font-bold text-[#FBBF24] active:scale-95 transition"
+          className="glass-card relative flex items-center gap-2 rounded-full py-2.5 pl-4 pr-5 text-[14.5px] font-bold text-amber-300 transition active:scale-95"
         >
+          <BarChart3 className="h-4 w-4 text-amber-300/80" />
           Polls
-          <span className="absolute -top-1.5 -right-1 bg-[#1D2B47] border border-[#2A3F68] text-[#7C8AA5] text-[8px] font-extrabold px-1.5 py-px rounded-full">SOON</span>
+          <span className="soon-badge absolute -top-1.5 -right-1 rounded-full border border-white/10 bg-[#101B31] px-1.5 py-px text-[8px] font-extrabold tracking-wider text-slate-400">SOON</span>
         </button>
         <button
           onClick={() => showToast('Salary Info — coming soon!')}
-          className="relative rounded-full bg-[#0E2233] border border-[#1D2B47] px-6 py-3 text-[16px] font-bold text-[#2DD4BF] active:scale-95 transition"
+          className="glass-card relative flex items-center gap-2 rounded-full py-2.5 pl-4 pr-5 text-[14.5px] font-bold text-teal-300 transition active:scale-95"
         >
+          <Wallet className="h-4 w-4 text-teal-300/80" />
           Salary Info.
-          <span className="absolute -top-1.5 -right-1 bg-[#1D2B47] border border-[#2A3F68] text-[#7C8AA5] text-[8px] font-extrabold px-1.5 py-px rounded-full">SOON</span>
+          <span className="soon-badge absolute -top-1.5 -right-1 rounded-full border border-white/10 bg-[#101B31] px-1.5 py-px text-[8px] font-extrabold tracking-wider text-slate-400">SOON</span>
         </button>
-        <div className="ml-auto flex items-center gap-2.5">
+        <div className="glass-inset ml-auto flex items-center gap-1 rounded-full p-1">
           <button
             onClick={() => toggleDuty(true)}
             disabled={attendanceLoading || isOnDuty}
-            className={`rounded-full px-5 py-3 text-[15px] font-bold transition active:scale-95 ${
-              isOnDuty ? 'bg-[#10B981] text-slate-950' : 'bg-[#334155] text-slate-300'
+            className={`rounded-full px-5 py-2.5 text-[14px] font-extrabold transition active:scale-95 ${
+              isOnDuty
+                ? 'bg-emerald-400 text-slate-950 shadow-[0_0_16px_rgba(52,211,153,0.45)]'
+                : 'text-slate-400'
             } ${attendanceLoading ? 'opacity-60' : ''}`}
           >
-            On
+            ON
           </button>
           <button
             onClick={() => toggleDuty(false)}
             disabled={attendanceLoading || !isOnDuty}
-            className={`rounded-full px-5 py-3 text-[15px] font-bold transition active:scale-95 ${
-              !isOnDuty ? 'bg-[#DC2626] text-white' : 'bg-[#334155] text-slate-300'
+            className={`rounded-full px-5 py-2.5 text-[14px] font-extrabold transition active:scale-95 ${
+              !isOnDuty
+                ? 'bg-rose-500 text-white shadow-[0_0_16px_rgba(244,63,94,0.4)]'
+                : 'text-slate-400'
             } ${attendanceLoading ? 'opacity-60' : ''}`}
           >
-            Off
+            OFF
           </button>
         </div>
       </div>
