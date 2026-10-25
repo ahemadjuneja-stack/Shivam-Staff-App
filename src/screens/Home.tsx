@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
   doc,
@@ -31,12 +31,28 @@ import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, starsFor } from '..
 //   Completed: Done cards ya "Nil"
 //   Fixed branch avatars: ZS Patan / RR Godhra / SK Mangrol (Boss: abhi fixed)
 //   Polls (SOON) | Salary Info. (SOON) | On/Off duty toggle
+//   Task Msgs box — WhatsApp style chat feed (Boss order 2026-10-25):
+//   task events bubbles me — assign (manager naam, left) + verify (Done/Not Done
+//   + points), date chips, bubble time, ticks. Manager view: apne msgs right green.
+// NO LOGOUT BUTTON (Boss: "app me koi logout button nahi hai") — hidden logout:
+//   staff name ko ~1s press & hold karo (design kuch nahi badalta).
 // Unclear cheezo pe SOON chip (Boss: "dhire dhire sab samaj ajayga")
 // ============================================================
 
 interface HomeProps {
   profile: UserProfile;
   onLogout: () => void;
+}
+
+// WhatsApp-style task message bubble (Boss order: "Task msgs ke liye ek box whatsapp jaisa")
+interface TaskMsg {
+  key: string;
+  at: number;
+  sender: string; // staff view: manager ka naam (group-chat style label); manager view: ''
+  mine: boolean;  // manager view: apne bheje hue (right, green)
+  text: string;
+  meta: string;   // chhoti line: deadline / points
+  verify?: boolean; // verification bubble (bold)
 }
 
 // Fixed branch avatars (Boss: "Abhi fixed" — aage real branch data)
@@ -72,8 +88,35 @@ const fmtDur = (min: number): string => {
 // floor hours: "145H"
 const fmtH = (min: number): string => `${Math.floor(min / 60)}H`;
 
+// "10:32 AM" — WhatsApp bubble time
+const fmtTime = (ms: number): string => {
+  const d = new Date(ms);
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, '0')} ${ap}`;
+};
+
 export default function Home({ profile, onLogout }: HomeProps) {
   const isManager = profile.role === 'manager';
+
+  // ---------- Hidden logout (Boss: design me logout button nahi) ----------
+  // Staff name ~1s press & hold -> English confirm -> logout (UI me kuch nahi dikhta)
+  const pressTimer = useRef<number | null>(null);
+  const cancelPress = () => {
+    if (pressTimer.current !== null) {
+      window.clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+  const startPress = () => {
+    cancelPress();
+    pressTimer.current = window.setTimeout(() => {
+      if (window.confirm('Logout from Shivam Staff App?')) onLogout();
+    }, 900);
+  };
+  useEffect(() => cancelPress, []);
 
   // ---------- Duty state ----------
   const [isOnDuty, setIsOnDuty] = useState<boolean>(false);
@@ -332,6 +375,43 @@ export default function Home({ profile, onLogout }: HomeProps) {
     }
   };
 
+  // ---------- Task Msgs feed (WhatsApp style, tasks se derive — koi naya write nahi) ----------
+  const taskMsgs = useMemo<TaskMsg[]>(() => {
+    const msgs: TaskMsg[] = [];
+    [...tasks]
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .forEach((t) => {
+        msgs.push({
+          key: `${t.id}-a`,
+          at: t.createdAt,
+          sender: isManager ? '' : t.byName,
+          mine: isManager,
+          text: t.title,
+          meta: isManager
+            ? `To: ${t.toName} • Deadline: ${fmtDate(t.deadlineAt)}`
+            : `Deadline: ${fmtDate(t.deadlineAt)} (${t.days} day${t.days > 1 ? 's' : ''})`
+        });
+        if (t.verifiedAt) {
+          const pts =
+            t.pointsDelta !== undefined
+              ? t.pointsDelta >= 0
+                ? `+${t.pointsDelta} points`
+                : `${t.pointsDelta} points`
+              : '';
+          msgs.push({
+            key: `${t.id}-v`,
+            at: t.verifiedAt,
+            sender: isManager ? '' : t.byName,
+            mine: isManager,
+            verify: true,
+            text: `Task verified: ${t.status === 'completed' ? 'Done' : 'Not Done'}`,
+            meta: pts
+          });
+        }
+      });
+    return msgs.sort((a, b) => a.at - b.at);
+  }, [tasks, isManager]);
+
   // ---------- Task verify (manager tap -> English Yes/No dialog) ----------
   const handleVerify = (t: Task) => {
     if (t.status !== 'pending' || !isManager) return;
@@ -368,9 +448,20 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       )}
 
-      {/* HEADER ROW — staff name (gold) + star badge with live credit points */}
+      {/* HEADER ROW — staff name (gold, long-press = hidden logout) + star badge */}
       <div className="flex items-center justify-end gap-2.5 pb-3">
-        <span className="text-[17px] font-bold text-[#FBBF24]">{profile.name}</span>
+        <span
+          className="select-none text-[17px] font-bold text-[#FBBF24]"
+          onTouchStart={startPress}
+          onTouchEnd={cancelPress}
+          onTouchMove={cancelPress}
+          onMouseDown={startPress}
+          onMouseUp={cancelPress}
+          onMouseLeave={cancelPress}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {profile.name}
+        </span>
         {!isManager && (
           <div className="relative flex h-11 w-11 items-center justify-center">
             <svg viewBox="0 0 24 24" className="h-11 w-11 text-[#F59300] drop-shadow-[0_2px_6px_rgba(245,147,0,0.35)]" fill="currentColor">
@@ -547,6 +638,60 @@ export default function Home({ profile, onLogout }: HomeProps) {
         )}
       </div>
 
+      {/* TASK MSGS BOX — WhatsApp style chat feed (Boss order) */}
+      <div className="mt-5">
+        <h2 className="text-[17px] font-semibold text-[#B7C5F0] mb-2">Task Msgs :</h2>
+        <div className="rounded-[22px] border border-[#1D2B47] bg-[#0B141A] shadow-[0_8px_24px_rgba(0,0,0,0.4)] overflow-hidden">
+          <div className="max-h-[420px] overflow-y-auto px-3 py-3.5">
+            {taskMsgs.length === 0 ? (
+              <div className="py-6 text-center text-[13px] text-[#8A93A6]">No task messages yet.</div>
+            ) : (
+              taskMsgs.map((m, i) => {
+                const chip = i === 0 || fmtDate(taskMsgs[i - 1].at) !== fmtDate(m.at);
+                return (
+                  <div key={m.key}>
+                    {chip && (
+                      <div className="my-2.5 flex justify-center">
+                        <span className="rounded-lg bg-[#1D2B47]/80 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-[#8A93A6]">
+                          {fmtDate(m.at)}
+                        </span>
+                      </div>
+                    )}
+                    <div className={`flex pb-1.5 ${m.mine ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className={`max-w-[85%] px-3 py-2 shadow-md ${
+                          m.mine
+                            ? 'bg-[#005C4B] rounded-2xl rounded-tr-sm'
+                            : 'bg-[#202C33] rounded-2xl rounded-tl-sm'
+                        }`}
+                      >
+                        {!m.mine && m.sender && (
+                          <div className="text-[11px] font-bold leading-tight text-[#53BDEB]">{m.sender}</div>
+                        )}
+                        <div
+                          className={`whitespace-pre-wrap break-words text-[13.5px] leading-snug ${
+                            m.verify ? 'font-semibold' : ''
+                          } ${m.mine ? 'text-[#E9FFEC]' : 'text-slate-100'}`}
+                        >
+                          {m.text}
+                        </div>
+                        {m.meta && <div className="mt-0.5 text-[10.5px] text-[#8696A0]">{m.meta}</div>}
+                        <div className="mt-0.5 flex items-center justify-end gap-1">
+                          <span className="text-[9.5px] text-[#8696A0]">{fmtTime(m.at)}</span>
+                          {m.mine && (
+                            <span className="text-[10px] font-bold leading-none text-[#53BDEB]">✓✓</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* FIXED branch avatars (Boss: abhi fixed — demo jaisa) */}
       <div className="mt-5 border-t border-[#2A3F68]/60 pt-4 flex items-start gap-5 overflow-x-auto">
         {FIXED_BRANCHES.map((b) => (
@@ -598,15 +743,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       </div>
 
-      {/* Logout — subtle (functional zaroori hai, purana style nahi) */}
-      <div className="mt-9 mb-1 text-center">
-        <button
-          onClick={onLogout}
-          className="text-[11px] font-semibold text-[#64748B] underline underline-offset-2 active:opacity-70"
-        >
-          Logout
-        </button>
-      </div>
     </div>
   );
 }
