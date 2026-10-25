@@ -17,7 +17,6 @@ import {
   StarEvent
 } from '../types';
 import HisabScreen from './Hisab';
-import DutyTargetsScreen from './DutyTargets';
 import DutyTimeSection from '../components/DutyTimeSection';
 
 interface HomeProps {
@@ -25,7 +24,7 @@ interface HomeProps {
   onLogout: () => void;
 }
 
-type SectionType = 'home' | 'attendance' | 'worklog' | 'sales' | 'profile' | 'dutytargets';
+type SectionType = 'home' | 'attendance' | 'worklog' | 'sales' | 'profile';
 
 export default function Home({ profile, onLogout }: HomeProps) {
   const [activeSection, setActiveSection] = useState<SectionType>('home');
@@ -198,16 +197,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
       <h2 className="text-lg font-extrabold text-white tracking-wide uppercase">{title}</h2>
     </div>
   );
-
-  // Render Duty Targets (admin/Boss only — PC dashboard section)
-  if (activeSection === 'dutytargets') {
-    return (
-      <div className={`min-h-screen text-slate-100 p-4 pb-14 ${slideCls}`}>
-        {renderTopAppBar('Duty Target')}
-        <DutyTargetsScreen profile={profile} />
-      </div>
-    );
-  }
 
   // Render Attendance Screen
   if (activeSection === 'attendance') {
@@ -465,26 +454,6 @@ export default function Home({ profile, onLogout }: HomeProps) {
           </div>
           <span className="text-white text-[15px] font-semibold">Profile</span>
         </button>
-
-        {/* 7. Duty Target (ADMIN ONLY — Boss dashboard) */}
-        {profile.role === 'admin' && (
-          <button
-            onClick={() => openSection('dutytargets')}
-            className="bg-[#0C1628] border border-[#1D2B47] rounded-[22px] p-5 flex flex-col items-center justify-center text-center shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:border-[#2A3F68] transition group active:scale-[0.98]"
-          >
-            <div className="h-[62px] w-[62px] rounded-[19px] bg-[#F59300]/13 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
-              <svg className="w-[34px] h-[34px] text-[#F59300]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="4" width="18" height="18" rx="2" />
-                <line x1="16" y1="2" x2="16" y2="6" />
-                <line x1="8" y1="2" x2="8" y2="6" />
-                <line x1="3" y1="10" x2="21" y2="10" />
-                <circle cx="12" cy="15.5" r="2.5" />
-                <polyline points="12 14.5 12 15.5 12.8 16" />
-              </svg>
-            </div>
-            <span className="text-white text-[15px] font-semibold">Duty Target</span>
-          </button>
-        )}
 
         {/* 5. Hisab XL (SOON) */}
         <button

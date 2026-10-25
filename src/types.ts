@@ -1,5 +1,4 @@
-// 'admin' = Boss — dashboard features (Duty Targets set etc.) sirf isko dikhte hain
-export type UserRole = 'worker' | 'sales' | 'admin';
+export type UserRole = 'worker' | 'sales';
 export type UserStatus = 'pending' | 'active' | 'rejected';
 
 export interface UserProfile {
