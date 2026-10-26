@@ -118,6 +118,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Deploy Firestore Rules (repo source of truth — fixes task assign PERMISSION_DENIED)
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
+          npx --yes firebase-tools@latest deploy --only firestore:rules --project shivam-staff-ff7d5 --force
+        continue-on-error: true
+
       - name: Deploy Web to Firebase Hosting (no APK in upload)
         uses: FirebaseExtended/action-hosting-deploy@v0
         continue-on-error: true
