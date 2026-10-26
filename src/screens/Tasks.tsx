@@ -12,6 +12,7 @@ import {
 import { db } from '../firebase';
 import { UserProfile, Task } from '../types';
 import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF } from '../lib/credit';
+import { txHistoryEntry } from '../lib/history';
 
 // ============================================================
 // TASKS SCREEN (Boss order 2026-10-25)
@@ -153,6 +154,16 @@ export default function TasksScreen({ profile, slideCls }: TasksScreenProps) {
         pointsDelta: delta
       });
       tx.set(cref, { taskScore: cur + delta, updatedAt: Date.now() }, { merge: true });
+      // Credit history (Boss Task 51): task outcome score ke saath atomic
+      txHistoryEntry(
+        tx,
+        t.toUid,
+        'task',
+        yes
+          ? (onTime ? `Task completed on time: "${t.title}"` : `Task completed late: "${t.title}"`)
+          : `Task marked NO by manager: "${t.title}"`,
+        delta
+      );
     }).catch((err: any) => window.alert('Verify failed: ' + err.message));
   };
 

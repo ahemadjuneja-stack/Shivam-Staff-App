@@ -23,6 +23,19 @@ export const CREDIT_POINTS = {
 // Ek manager ek staff pe max ACTIVE (pending) tasks — Boss rule
 export const MAX_ACTIVE_TASKS_PER_STAFF = 5;
 
+// BOSS RULE 2026-10-26 (Task 51): ON DUTY par har ghante ke 2 points cut.
+// "On duty par har ghante ke 2 points cut karo" — sirf duty lagne se credit
+// nahi badhna chahiye, kaam (tasks) karne se badhna chahiye. Deduction
+// DAILY accrual me fold hota hai (punch-based workedMin se — reliable,
+// app band ho to bhi hours count hote hain). Floor 1 clamp pehle jaisa hi.
+export const HOURLY_ON_DUTY_CUT = -2;
+
+// Ek completed din ke on-duty hours ka cut: floor(hours) * HOURLY_ON_DUTY_CUT
+export function hourlyCutFor(workedMin: number): { delta: number; hours: number } {
+  const hours = Math.floor(Math.max(0, workedMin) / 60);
+  return { delta: hours * HOURLY_ON_DUTY_CUT, hours };
+}
+
 // BOSS rule 2026-10-26: score kabhi 0 nahi gir sakta — floor 1 (1-100 range).
 // "Ek hi din me 10 galatiya ki to credit points 0 ho jayega — aise mat karo"
 export const clamp100 = (n: number): number => Math.max(1, Math.min(100, Math.round(n)));

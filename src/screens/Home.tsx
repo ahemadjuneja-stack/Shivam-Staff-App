@@ -16,7 +16,9 @@ import {
 import { db } from '../firebase';
 import { UserProfile, PunchRecord, Task, CreditDoc, OutsideLog } from '../types';
 import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
-import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, clamp100, starsFor, dailyCreditDelta, workedMinutesOnDay } from '../lib/credit';
+import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, clamp100, starsFor, dailyCreditDelta, workedMinutesOnDay, hourlyCutFor } from '../lib/credit';
+import { logCreditHistory, txHistoryEntry } from '../lib/history';
+import PointsGuide from './PointsGuide';
 import { reportDeviceAndLocation } from '../lib/reporting';
 import { sampleGeofence, closeStaleOutsideEvent, lastGpsFix, SAMPLE_MS } from '../lib/geofence';
 import { enqueueOutbox, flushOutbox } from '../lib/sync';
@@ -271,6 +273,8 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
   // ---------- CREDIT POINTS (live) ----------
   const [creditDoc, setCreditDoc] = useState<CreditDoc | null>(null);
+  // POINTS GUIDE (Boss Task 51): staff apne points ka pura up/down rule dekh sake
+  const [showGuide, setShowGuide] = useState(false);
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'credit_points', profile.uid), (snap) => {
       setCreditDoc(snap.exists() ? ({ uid: snap.id, ...(snap.data() as Omit<CreditDoc, 'uid'>) }) : null);
@@ -317,8 +321,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
     if (profile.role !== 'worker') return;
     const calc = computeDutyMin(punches, isOnDuty, targetH, profile.createdAt);
     const target = calc.monthDeltaMin >= 0 ? CREDIT_POINTS.HOURS_ONTRACK : CREDIT_POINTS.HOURS_BEHIND;
-    if (creditDoc && (Number(creditDoc.hoursScore) || 0) === target) return;
+    const cur = Number(creditDoc?.hoursScore) || 0;
+    if (creditDoc && cur === target) return;
     setDoc(doc(db, 'credit_points', profile.uid), { hoursScore: target, updatedAt: Date.now() }, { merge: true }).catch(() => {});
+    // Credit history (Boss Task 51): monthly duty up/down bhi history me
+    logCreditHistory(profile.uid, 'hours', target >= 0 ? 'Monthly duty on track' : 'Monthly duty behind', target);
   }, [profile.role, profile.uid, profile.createdAt, punches, isOnDuty, targetH, creditDoc]);
 
   // ---------- Daily credit accrual (Boss order 2026-10-26: har roz duty time ke hisab se up/down) ----------
@@ -350,8 +357,19 @@ export default function Home({ profile, onLogout }: HomeProps) {
     const dailyTargetMin = (targetH * 60) / daysInMonth; // lib/duty.ts dailyRateMin jaisa
     let accrual = 0;
     let iter = 0;
+    const historyEntries: { type: 'daily' | 'hourly'; label: string; delta: number }[] = [];
     while (cursor <= yesterday && iter < 31) {
-      accrual += dailyCreditDelta(workedMinutesOnDay(punches, ymdOf(cursor)), dailyTargetMin);
+      const wm = workedMinutesOnDay(punches, ymdOf(cursor));
+      const dayBonus = dailyCreditDelta(wm, dailyTargetMin);
+      // BOSS RULE (Task 51): on-duty har ghanta -2 — daily accrual ke saath fold
+      const cut = hourlyCutFor(wm);
+      accrual += dayBonus + cut.delta;
+      if (dayBonus !== 0) {
+        historyEntries.push({ type: 'daily', label: `Duty day (${(wm / 60).toFixed(1)}h) credit`, delta: dayBonus });
+      }
+      if (cut.delta !== 0) {
+        historyEntries.push({ type: 'hourly', label: `On-duty time (${cut.hours}h)`, delta: cut.delta });
+      }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
       iter++;
     }
@@ -361,6 +379,8 @@ export default function Home({ profile, onLogout }: HomeProps) {
       { dailyScore: (Number(creditDoc?.dailyScore) || 0) + accrual, lastCreditDay: todayYmd, updatedAt: Date.now() },
       { merge: true }
     ).catch(() => {});
+    // Credit history (Boss Task 51): har day ka daily bonus + hourly cut
+    historyEntries.forEach((e) => logCreditHistory(profile.uid, e.type, e.label, e.delta));
   }, [profile.role, profile.uid, profile.createdAt, punches, targetH, creditDoc]);
 
   // ---------- GEOFENCE (Boss order 2026-10-26): net band ho to bhi GPS se
@@ -428,6 +448,17 @@ export default function Home({ profile, onLogout }: HomeProps) {
           const cs = await tx.get(cref);
           const cur = cs.exists() ? Number(cs.data().taskScore) || 0 : 0;
           tx.set(cref, { taskScore: clamp100(cur + d2), updatedAt: Date.now() }, { merge: true });
+          // Credit history (Boss Task 51): outside outcome score ke saath atomic
+          const outLabel = d2 === CREDIT_POINTS.OUTSIDE_REJECT
+            ? 'Outside work rejected by manager'
+            : d2 === CREDIT_POINTS.OUTSIDE_ONTIME
+              ? 'Back from outside on time'
+              : d2 === CREDIT_POINTS.OUTSIDE_LATE
+                ? 'Late return from outside'
+                : d2 === CREDIT_POINTS.OUTSIDE_NO_NOTICE
+                  ? 'Went outside without notice'
+                  : 'Outside work approved';
+          if (d2 !== 0) txHistoryEntry(tx, profile.uid, 'outside', outLabel, d2);
           tx.update(lref, {
             cutApplied: true,
             cutPoints: d2,
@@ -650,6 +681,16 @@ export default function Home({ profile, onLogout }: HomeProps) {
         pointsDelta: delta
       });
       tx.set(cref, { taskScore: cur + delta, updatedAt: Date.now() }, { merge: true });
+      // Credit history (Boss Task 51): task outcome score ke saath atomic
+      txHistoryEntry(
+        tx,
+        t.toUid,
+        'task',
+        yes
+          ? (onTime ? `Task completed on time: "${t.title}"` : `Task completed late: "${t.title}"`)
+          : `Task marked NO by manager: "${t.title}"`,
+        delta
+      );
     }).catch((err: any) => window.alert('Verify failed: ' + err.message));
   };
 
@@ -657,6 +698,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const doneTasks = tasks
     .filter((t) => t.status !== 'pending')
     .sort((a, b) => (b.verifiedAt || b.createdAt) - (a.verifiedAt || a.createdAt));
+
+  // POINTS GUIDE page (Boss Task 51) — sab hooks ke BAAD early return (safe)
+  if (showGuide) {
+    return <PointsGuide onBack={() => setShowGuide(false)} />;
+  }
 
   return (
     <div className="relative min-h-screen text-slate-100 px-4 pb-28">
@@ -708,9 +754,12 @@ export default function Home({ profile, onLogout }: HomeProps) {
                 </svg>
                 <span className="absolute text-[13.5px] font-black text-[#3B2302]">{creditInfo.rank}</span>
               </div>
-              <span className="mt-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-2.5 py-0.5 text-[9px] font-extrabold tracking-wide text-amber-300">
-                Credit Points: {creditInfo.total}
-              </span>
+              <button
+                onClick={() => setShowGuide(true)}
+                className="mt-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-2.5 py-0.5 text-[9px] font-extrabold tracking-wide text-amber-300 active:scale-95 transition"
+              >
+                Credit Points: {creditInfo.total} · Guide
+              </button>
             </div>
           )}
         </div>
