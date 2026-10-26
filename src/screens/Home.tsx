@@ -35,7 +35,7 @@ import {
   MAX_SHIFT_MS
 } from '../lib/integrity';
 import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 'lucide-react';
-import { consumeAutoDutyRequest } from './LocationGate';
+import { consumeAutoDutyRequest, consumeAutoDutyOffRequest } from './LocationGate';
 import TaskVerifyModal from '../components/TaskVerifyModal';
 import { verifyTask } from '../lib/taskVerify';
 
@@ -157,8 +157,8 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const [, setTick] = useState(0);
   // attendance snapshot pe baar aaya? (auto-duty race-safe decision ke liye)
   const [attLoaded, setAttLoaded] = useState<boolean>(false);
-  // LOCATION GATE auto-duty request (100m andar pass) — mount par ek hi baar consume
-  const [gateDutyReq, setGateDutyReq] = useState<boolean>(() => consumeAutoDutyRequest());
+  // AUTO DUTY flags ab effect me har 2s consume hote hain (LocationGate se) —
+  // mount-time single consume nahi (sales location OFF/ON repeat ho sakta hai)
 
   // ---------- Toast (SOON modules) ----------
   const [notice, setNotice] = useState<string | null>(null);
@@ -194,16 +194,27 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return () => unsub();
   }, [profile.uid]);
 
-  // ---------- AUTO DUTY ON (Boss order 2026-10-26: "100 mitter ke andar hai
-  // location me access de diya to automatically duty on ho jaani chahiye"):
-  // LocationGate pass -> flag -> attendance load hone ke BAAD decide (race-safe:
-  // duty already ON thi to kuch nahi karte, OFF thi to exactly ek 'in' punch).
+  // ---------- AUTO DUTY (Boss order 2026-10-26: "100 mitter ke andar hai
+  // location me access de diya to automatically duty on ho jaani chahiye") +
+  // SALES LOCATION DUTY (Boss order 2026-10-26: "salesmen ko on off duty ka
+  // button bhi nahi hona chahiye, unka duty location par hi chalega"):
+  // LocationGate flags set karta hai (ON: gate pass — worker+sales; OFF:
+  // location off — sales) -> ye poll 2s me consume karta hai. Race-safe:
+  // attendance load hone ke BAAD + isOnDuty check ke saath — exact ek punch.
+  // Worker: sirf ON flag (button se OFF karta hai). Sales: dono flags.
   useEffect(() => {
-    if (profile.role === 'manager' || !attLoaded || !gateDutyReq) return;
-    setGateDutyReq(false); // ek hi baar — koi repeat nahi
-    if (!isOnDuty) toggleDuty(true);
+    if (profile.role === 'manager' || !attLoaded) return;
+    const iv = window.setInterval(() => {
+      if (consumeAutoDutyRequest()) {
+        if (!isOnDuty) toggleDuty(true);
+      }
+      if (profile.role === 'sales' && consumeAutoDutyOffRequest()) {
+        if (isOnDuty) toggleDuty(false);
+      }
+    }, 2000);
+    return () => window.clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attLoaded, gateDutyReq, isOnDuty, profile.role]);
+  }, [profile.role, attLoaded, isOnDuty]);
 
   // ---------- Listeners: punches (duty calc + credit hours) ----------
   useEffect(() => {
@@ -1063,7 +1074,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
           side me jane do", pehle left tha, usse pehle center). App open hote hi
           visible, scroll na kare. Poore app me EK hi instance. Same handlers/writes
           — ZERO logic change, sirf position. Sync number badge REMOVED (Boss:
-          "jitni baar dabate hai numbers aa raha hai uski zaroorat nahi"). */}
+          "jitni baar dabate hai numbers aa raha hai uski zaroorat nahi").
+          SALES: BUTTON NAHI (Boss order 2026-10-26: "salesmen ko on off duty ka
+          button bhi nahi hona chahiye, unka duty location par hi chalega") —
+          unka duty app khud location ON/OFF se chalata hai. */}
+      {!isSales && (
       <div
         className="glass-inset fixed right-4 z-40 flex items-center gap-1 rounded-full p-1 shadow-[0_12px_40px_rgba(2,6,23,0.7)]"
         style={{ bottom: 'calc(var(--sab) + 14px)' }}
@@ -1091,6 +1106,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
           OFF
         </button>
       </div>
+      )}
 
       {/* Verify modal — dismiss (X/backdrop) = NO action, task stays pending */}
       <TaskVerifyModal

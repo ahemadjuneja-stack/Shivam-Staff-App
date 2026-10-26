@@ -4,6 +4,7 @@ import { fetchLocation } from '../lib/reporting';
 import { getShopCenter, distanceToShopM, noteGpsFix } from '../lib/geofence';
 import { LocationGuard } from '../lib/locationGuard';
 import { diagLog } from '../lib/diag';
+import { openLocationSession, closeLocationSession, appendTrackPoint } from '../lib/locTrack';
 
 // ============================================================
 // LOCATION GATE (Boss order 2026-10-26 + English screen 2026-10-26):
@@ -63,6 +64,30 @@ export const consumeAutoDutyRequest = (): boolean => {
   return false;
 };
 
+// SALES AUTO DUTY OFF (Boss order 2026-10-26: "salesmen ka duty location par
+// hi chalega — button nahi"): location OFF hote hi ye flag — Home consume
+// karke auto 'out' punch karta hai (same toggleDuty sync-guarantee path).
+const AUTO_DUTY_OFF_FLAG = 'shivam_auto_duty_off_request';
+export const requestAutoDutyOff = () => {
+  try {
+    window.localStorage.setItem(AUTO_DUTY_OFF_FLAG, String(Date.now()));
+  } catch {
+    // ignore
+  }
+};
+export const consumeAutoDutyOffRequest = (): boolean => {
+  try {
+    const v = Number(window.localStorage.getItem(AUTO_DUTY_OFF_FLAG) || 0);
+    if (v > 0 && Date.now() - v < 3 * 60 * 1000) {
+      window.localStorage.removeItem(AUTO_DUTY_OFF_FLAG);
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+};
+
 type GateState =
   | { kind: 'checking' }              // permission prompt + GPS fix chal raha hai
   | { kind: 'denied' }                // permission reject hua
@@ -91,8 +116,12 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   const radiusRef = useRef<number>(100);
   radiusRef.current = radius;
   const retryTimer = useRef<number | null>(null);
+  const trackTimerRef = useRef<number | null>(null); // sales road-map sampler
   const mounted = useRef(true);
   const runCheckRef = useRef<() => void>(() => {});
+  // SESSION OPEN location — gate pass wala fresh fix (runCheck ne noteGpsFix
+  // kiya hota hai) — kind-effect ise padhta hai (state closure stale na ho)
+  const lastGpsFixRef = useRef<{ lat: number; lng: number } | null>(null);
   // PROBE LAYER (Boss bug 2026-10-26: "location band karne par bhi app continue
   // rehti hai"): current state/center refs — interval closures fresh padhte hain
   const stateKindRef = useRef<GateState['kind']>(state.kind);
@@ -403,6 +432,51 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [gated]);
 
+  // ---------- SALES LOCATION DUTY TRACKING (Boss order 2026-10-26: "salesmen
+  // ka duty location par hi chale — button nahi; kaha ON kiya, kaha OFF,
+  // poora road map dashboard me"): gate state machine par sessions chalti hai —
+  //   pass        -> loc_session OPEN + auto-duty-ON request (Home punch karta hai)
+  //                  + road-map sampler (har 3 min FRESH fix -> points[])
+  //   off/denied  -> loc_session CLOSE (last point = OFF location) + auto-duty-OFF
+  //                  request + loc_event 'off'
+  // SALES ONLY (worker ka apna geofence system hai, manager bypass).
+  useEffect(() => {
+    if (!gated || !isSales) return;
+    const kind = state.kind;
+    if (kind === 'pass') {
+      // SESSION OPEN/RESUME — lastGpsFix (fresh gate fix) = ON location
+      openLocationSession(profile.uid, profile.name, (() => {
+        const f = lastGpsFixRef.current;
+        return f ? { lat: f.lat, lng: f.lng } : null;
+      })()).catch(() => {});
+      requestAutoDutyOn(); // location ON = duty ON (button nahi — auto)
+      // ROAD-MAP SAMPLER — har 3 min FRESH fix -> session points[]
+      if (trackTimerRef.current === null) {
+        appendTrackPoint(profile.uid).catch(() => {}); // pehla point jaldi
+        trackTimerRef.current = window.setInterval(() => {
+          if (!mounted.current) return;
+          appendTrackPoint(profile.uid).catch(() => {});
+        }, 3 * 60 * 1000);
+      }
+    } else if (kind === 'gps-off-live' || kind === 'denied') {
+      // SESSION CLOSE — location OFF / permission revoke = duty khatam
+      closeLocationSession(profile.uid, profile.name, kind === 'denied' ? 'permission' : 'loc_off').catch(() => {});
+      requestAutoDutyOff(); // location OFF = duty OFF (Home auto 'out' punch)
+      if (trackTimerRef.current !== null) {
+        window.clearInterval(trackTimerRef.current);
+        trackTimerRef.current = null;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gated, isSales, state.kind]);
+
+  // sampler cleanup
+  useEffect(() => {
+    return () => {
+      if (trackTimerRef.current !== null) window.clearInterval(trackTimerRef.current);
+    };
+  }, []);
+
   const runCheck = async () => {
     if (!mounted.current) return;
     setState({ kind: 'checking' });
@@ -430,6 +504,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     }
     noteGpsFix(loc.lat, loc.lng, loc.at); // is fix ko punches ke coords me bhi use karo
     lastFixAtRef.current = Date.now();
+    lastGpsFixRef.current = { lat: loc.lat, lng: loc.lng }; // sales session ON location
     // SALES GATE (Boss order 2026-10-26): salesman KAHIN SE BHI app khol sakta
     // hai — shop radius check NAHI — par location access + GPS fix ZARURI.
     if (!radiusCheckRef.current) {

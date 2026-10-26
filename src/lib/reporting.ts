@@ -113,6 +113,10 @@ export async function reportDeviceAndLocation(uid: string) {
       appVersion,
       appVersionCode,
       lastSeenAt: Date.now(),
+      // NET TYPE (Boss order 2026-10-26: "jab jab location aur net dono on kare
+      // uski sari information bhejni hai" — slow/fast/wifi ka pata dashboard ko):
+      // 'wifi' | 'cellular' | 'slow-2g'... (WebView Network Information API)
+      netType: (navigator as any)?.connection?.effectiveType || 'unknown',
       // SYNC HEALTH (Boss: dashboard ko pata ho ke device kitna synced hai):
       syncHealth: {
         pending: outboxPendingCount(),   // outbox me abhi bhi Confirm-pending writes
