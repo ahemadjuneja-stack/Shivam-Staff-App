@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { fetchLocation } from '../lib/reporting';
 import { getShopCenter, distanceToShopM, noteGpsFix } from '../lib/geofence';
+import { LocationGuard } from '../lib/locationGuard';
 
 // ============================================================
 // LOCATION GATE (Boss order 2026-10-26 + English screen 2026-10-26):
@@ -105,13 +107,70 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     }
   };
 
+  // ---------- DETECTION LAYER 0 (Boss order 2026-10-26: "location off karne
+  // par app INSTANT band ho jaye — timing ka problem hai"): NATIVE SYSTEM
+  // BROADCAST — Android LocationManager PROVIDERS_CHANGED/MODE_CHANGED quick
+  // settings se location OFF/ON hote hi MILLISECONDS me fire hota hai
+  // (LocationGuardPlugin sunta hai). enabled=false -> TURANT lock (probe/
+  // watchdog ka 20-60s wait khatam); enabled=true -> full re-gate recovery.
+  // Probe/watchdog layers iske BACKUP hain (web dev / broadcast miss case).
+  useEffect(() => {
+    if (!gated || !Capacitor.isNativePlatform()) return;
+    let alive = true;
+    let handle: import('@capacitor/core').PluginListenerHandle | null = null;
+    LocationGuard.addListener('locationStateChanged', (d) => {
+      if (!alive || !mounted.current) return;
+      const enabled = !!d?.enabled;
+      const k = stateKindRef.current;
+      if (!enabled) {
+        // INSTANT LOCK — system ne confirm kiya location band hai
+        lastFixAtRef.current = 0;
+        setState((prev) => (prev.kind === 'pass' || prev.kind === 'far' ? { kind: 'gps-off-live' } : prev));
+      } else {
+        // location wapas ON — full re-gate (gps-off-live/gps/far) ya probe (pass)
+        if (k === 'gps-off-live' || k === 'gps' || k === 'far') {
+          window.setTimeout(() => {
+            if (!mounted.current) return;
+            stopWatch();
+            runCheckRef.current();
+          }, 400);
+        } else if (k === 'pass') {
+          window.setTimeout(() => {
+            if (mounted.current) runProbe();
+          }, 400);
+        }
+      }
+    }).then((h) => {
+      if (!alive) {
+        h.remove().catch(() => {});
+        return;
+      }
+      handle = h;
+    });
+    LocationGuard.start().catch(() => {});
+    // start-time safety: app background me toggle hua ho to bhi turant sahi state
+    LocationGuard.isEnabled()
+      .then((r) => {
+        if (!alive || !mounted.current || !r || r.enabled) return;
+        lastFixAtRef.current = 0;
+        setState((prev) => (prev.kind === 'pass' || prev.kind === 'far' ? { kind: 'gps-off-live' } : prev));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      if (handle) handle.remove().catch(() => {});
+      LocationGuard.stop().catch(() => {});
+    };
+  }, [gated]);
+
   // ---------- DETECTION LAYER 3 (Boss bug 2026-10-26: "location band karne par
   // app band nahi hoti, continue rehti hai"): INDEPENDENT FRESH-FIX PROBE —
-  // har 20s ek getCurrentPosition maximumAge:0 (cached fix KABHI nahi, sirf
+  // har 10s ek getCurrentPosition maximumAge:0 (cached fix KABHI nahi, sirf
   // FRESH fix). Location service band hote hi ye reliably error deta hai
   // (watchPosition ki tarah silent stall NAHI karta) — 2 lagatar fail = LOCK.
-  // Wapas location ON = fresh fix milte hi app KHUD recover (gps/gps-off-live
-  // dono se). Ye layer KISI aur layer par depend nahi karti.
+  // Native broadcast (layer 0) instant lock deta hai — ye backup hai. Wapas
+  // location ON = fresh fix milte hi app KHUD recover (gps/gps-off-live dono se).
+  // Ye layer KISI aur layer par depend nahi karti.
   const runProbe = async () => {
     if (!mounted.current || probeInFlightRef.current) return;
     if (!('geolocation' in navigator)) return;
@@ -186,7 +245,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     const iv = window.setInterval(() => {
       if (!mounted.current) return;
       runProbe();
-    }, 20000);
+    }, 10000);
     return () => window.clearInterval(iv);
   }, [gated]);
 
@@ -314,7 +373,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   // ---------- BACKGROUND GRACE: app background me WebView timers + GPS updates
   // pause ho jate hain — wapas foreground aane par 30s ki fresh grace do (false
   // popup avoid), phir watchdog normal chal jayega. SAATH HI turant fresh-fix
-  // PROBE bhi — location band karke wapas aaye to 20s wait nahi, jaldi pakda jata hai.
+  // PROBE bhi — location band karke wapas aaye to wait nahi, jaldi pakda jata hai.
   useEffect(() => {
     if (!gated) return;
     const onVis = () => {
@@ -322,7 +381,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
         lastFixAtRef.current = Date.now();
         window.setTimeout(() => {
           if (mounted.current) runProbe();
-        }, 1500);
+        }, 300);
       }
     };
     document.addEventListener('visibilitychange', onVis);
