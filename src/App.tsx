@@ -4,7 +4,7 @@ import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from 'fire
 import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { auth, db } from './firebase';
-import { PROFILE_KEY, readStoredCredentials, syncCredentialsFromDoc, clearSession } from './lib/session';
+import { PROFILE_KEY, readStoredCredentials, syncCredentialsFromDoc, clearSession, storeProfile, ensureSessionRestored } from './lib/session';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
@@ -12,6 +12,28 @@ import LocationGate from './screens/LocationGate';
 import UpdatePopup from './components/UpdatePopup';
 import IntroScreen from './components/IntroScreen';
 import BrandHeader from './components/BrandHeader';
+
+// status EXPLICITLY non-active (pending/deleted/rejected/inactive...) = admin
+// ne band kiya -> real logout. Missing/undefined status = doc anomaly —
+// session RAKHO (kisi doc-format surprise se galti ka logout kabhi nahi).
+const isExplicitInactive = (s: unknown): boolean =>
+  typeof s === 'string' && s.length > 0 && s !== 'active';
+
+// SILENT RE-LOGIN RETRY (never-logout layer 3): cold start par data
+// connection aksar late hota hai — pehli koshish network fail ho to 4s/12s/30s
+// par dobara. invalid-credential (PIN change) par retry bekaar hai.
+const SILENT_RELOGIN_DELAYS = [4000, 12000, 30000];
+const trySilentReLogin = (attempt: number) => {
+  const creds = readStoredCredentials();
+  if (!creds) return;
+  signInWithEmailAndPassword(auth, creds.email, creds.password).catch((err: any) => {
+    const code = String(err?.code || '');
+    const networkFail = code.includes('network') || code.includes('timeout');
+    if (networkFail && attempt <= SILENT_RELOGIN_DELAYS.length) {
+      window.setTimeout(() => trySilentReLogin(attempt + 1), SILENT_RELOGIN_DELAYS[attempt - 1]);
+    }
+  });
+};
 
 export default function App() {
   const [introDone, setIntroDone] = useState(false);
@@ -39,7 +61,37 @@ export default function App() {
   });
   const [watchUid, setWatchUid] = useState<string | null>(null);
 
+  // BOOT RESTORE (never-logout layer 2): WebView storage wipe hone par native
+  // SessionVault (SharedPreferences) se cached profile + creds wapas aate
+  // hain — pehle render se hi. onAuthStateChanged iske BAAD hi register hota
+  // hai taaki wipe case me login screen kabhi flash na ho.
+  const [booted, setBooted] = useState(false);
+
   useEffect(() => {
+    let alive = true;
+    ensureSessionRestored().finally(() => {
+      if (!alive) return;
+      try {
+        const saved = localStorage.getItem(PROFILE_KEY);
+        if (saved) {
+          const p = JSON.parse(saved);
+          if (p && typeof p === 'object') {
+            setProfile(p);
+            setLoading(false);
+          }
+        }
+      } catch {
+        /* corrupt cache — auth flow decide karega */
+      }
+      setBooted(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!booted) return;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         setWatchUid(firebaseUser.uid);
@@ -49,7 +101,9 @@ export default function App() {
 
           if (userDocSnap.exists()) {
             const data = userDocSnap.data();
-            if (data.status === 'active') {
+            // active ya status-missing — dono me app chalta rahega;
+            // sirf EXPLICIT non-active status (pending/deleted/rejected) = logout
+            if (!isExplicitInactive(data.status)) {
               syncCredentialsFromDoc(data);
               const p: UserProfile = {
                 uid: firebaseUser.uid,
@@ -61,7 +115,7 @@ export default function App() {
                 createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
               };
               setProfile(p);
-              localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+              storeProfile(p);
             } else {
               // admin ne deactivate/delete kiya — REAL logout (profile + creds clear)
               clearSession();
@@ -87,7 +141,7 @@ export default function App() {
                     createdAt: typeof d.createdAt === 'number' ? d.createdAt : (typeof d.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now())
                   };
                   setProfile(p);
-                  localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+                  storeProfile(p);
                 }
               }
             }
@@ -109,9 +163,10 @@ export default function App() {
         } else {
           const creds = readStoredCredentials();
           if (creds) {
-            signInWithEmailAndPassword(auth, creds.email, creds.password).catch(() => {
-              /* silent fail — cached profile + Firestore se app chalta rahega */
-            });
+            // cached profile ke saath app chalta rahega; creds se silent
+            // re-login (network fail par 4s/12s/30s retry) — login screen
+            // yahan se KABHI nahi aati
+            trySilentReLogin(1);
           }
         }
       }
@@ -119,7 +174,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [booted]);
 
   // LIVE PROFILE SYNC (Boss bug 2026-10-26: "role change karne par screen ka
   // UI aur permissions change nahi hote"): ye watcher logged-in rehte hue
@@ -136,7 +191,8 @@ export default function App() {
       (snap) => {
         if (!snap.exists()) return;
         const data = snap.data();
-        if (data.status !== 'active') {
+        // sirf EXPLICIT non-active status = admin logout; missing status = anomaly, session rakho
+        if (isExplicitInactive(data.status)) {
           // Pending approval (profile abhi null) -> kuch mat karo, approval ka wait
           // Logged-in staff ko admin ne deactivate/delete kiya -> REAL logout
           if (localStorage.getItem(PROFILE_KEY)) {
@@ -157,7 +213,7 @@ export default function App() {
           createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
         };
         setProfile(p);
-        localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+        storeProfile(p);
       },
       (err) => {
         console.error('Profile watch error:', err);
@@ -199,7 +255,7 @@ export default function App() {
       <div className="relative flex min-h-screen flex-col">
         <BrandHeader />
         <main className="flex-1 pb-safe">
-          {loading ? (
+          {!booted || loading ? (
             <div className="flex min-h-[80vh] items-center justify-center text-slate-400">
               <div className="text-center">
                 <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-500 border-r-transparent"></div>
@@ -210,7 +266,7 @@ export default function App() {
             <AuthScreen
               onLoginSuccess={(p) => {
                 setProfile(p);
-                localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+                storeProfile(p);
               }}
             />
           ) : (

@@ -14,6 +14,9 @@ public class MainActivity extends BridgeActivity {
         // Capacitor Bridge super.onCreate() me ban jata hai — uske baad register karoge to
         // plugin JS ko "not implemented" dikhta hai aur in-app update popup kabhi nahi aata.
         registerPlugin(UpdaterPlugin.class);
+        // SESSION VAULT: credentials/profile ka native SharedPreferences backup
+        // (WebView storage wipe par bhi session zinda rehta hai — never-logout)
+        registerPlugin(SessionVaultPlugin.class);
         super.onCreate(savedInstanceState);
 
         // Edge-to-end: content status bar + nav bar ke NEECHE tak full screen.

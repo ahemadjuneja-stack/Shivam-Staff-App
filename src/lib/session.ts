@@ -9,14 +9,52 @@
 // (dashboard changeStaffPin / registerStaff dono sync me rakhte hain) —
 // isliye PIN change hote hi stored credentials bhi live update ho jate hain
 // aur silent re-login hamesha working rehta hai.
+//
+// DUAL-LAYER STORAGE (Boss bug report 2026-10-26: "58 update ke baad bhi
+// logout ho gaya" — APK verify kiya, code sahi tha; ROOT CAUSE: WebView ka
+// localStorage + IndexedDB DONO wipe ho rahe the device par — OEM cleaner /
+// WebView update / low-storage eviction. Cached profile + creds + Firebase
+// session TINO ek saath gayab -> login screen). FIX: har write ke saath
+// NATIVE SharedPreferences backup (SessionVault plugin — shared_prefs/,
+// WebView storage se alag, sirf Clear Data/uninstall se mitta hai) aur boot
+// par WebView storage khali mile to native vault se restore.
+
+import { registerPlugin } from '@capacitor/core';
 
 export const PROFILE_KEY = 'shivam_staff_logged_user';
 export const CRED_KEY = 'shivam_staff_credentials';
+
+interface SessionVaultPluginDef {
+  set(options: { key: string; value: string }): Promise<void>;
+  get(options: { key: string }): Promise<{ value?: string }>;
+  remove(options: { key: string }): Promise<void>;
+}
+
+// Native plugin (SessionVaultPlugin.java) — sirf APK me available; web dev
+// me calls "not implemented" throw karenge (sab try/catch me wrapped hai)
+const SessionVault = registerPlugin<SessionVaultPluginDef>('SessionVault');
 
 export interface StoredCredentials {
   email: string;
   password: string;
 }
+
+// Fire-and-forget native mirror — kabhi bhi main flow block ya fail nahi karega
+const vaultSet = (key: string, value: string): void => {
+  try {
+    SessionVault.set({ key, value }).catch(() => {});
+  } catch {
+    /* web dev / plugin missing — localStorage hi source of truth rahega */
+  }
+};
+
+const vaultRemove = (key: string): void => {
+  try {
+    SessionVault.remove({ key }).catch(() => {});
+  } catch {
+    /* web dev */
+  }
+};
 
 export const readStoredCredentials = (): StoredCredentials | null => {
   try {
@@ -33,11 +71,24 @@ export const readStoredCredentials = (): StoredCredentials | null => {
 };
 
 export const storeCredentials = (email: string, password: string): void => {
+  const raw = JSON.stringify({ email, password });
   try {
-    localStorage.setItem(CRED_KEY, JSON.stringify({ email, password }));
+    localStorage.setItem(CRED_KEY, raw);
   } catch {
-    /* storage unavailable — silent re-login nahi hoga, app cached profile se chalega */
+    /* storage unavailable — native vault phir bhi backup lega */
   }
+  vaultSet(CRED_KEY, raw);
+};
+
+// Cached profile ka dual-layer write — App.tsx isse hi PROFILE_KEY likhta hai
+export const storeProfile = (p: unknown): void => {
+  const raw = JSON.stringify(p);
+  try {
+    localStorage.setItem(PROFILE_KEY, raw);
+  } catch {
+    /* ignore */
+  }
+  vaultSet(PROFILE_KEY, raw);
 };
 
 // users/{uid} doc se credentials sync — dashboard se PIN change hone par bhi
@@ -59,7 +110,50 @@ export const syncCredentialsFromDoc = (data: any): void => {
   }
 };
 
-// Explicit logout / admin-deactivation — profile + credentials DONO clear
+// BOOT RESTORE — WebView storage wipe hone par native vault se wapas laao.
+// App ke pehle render se PEHLE ek hi baar call hota hai (App.tsx boot effect).
+// Sirf MISSING keys restore hote hain — healthy localStorage kabhi overwrite
+// nahi hota (fresh data hamesha jeete).
+export const ensureSessionRestored = async (): Promise<void> => {
+  let lp: string | null = null;
+  let lc: string | null = null;
+  try {
+    lp = localStorage.getItem(PROFILE_KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    lc = localStorage.getItem(CRED_KEY);
+  } catch {
+    /* ignore */
+  }
+  if (lp && lc) return; // dono healthy — kuch nahi karna
+
+  let np: string | undefined;
+  let nc: string | undefined;
+  try {
+    const r = await SessionVault.get({ key: PROFILE_KEY });
+    np = r.value;
+  } catch {
+    /* web dev / plugin missing */
+  }
+  try {
+    const r = await SessionVault.get({ key: CRED_KEY });
+    nc = r.value;
+  } catch {
+    /* web dev */
+  }
+
+  try {
+    if (!lp && np) localStorage.setItem(PROFILE_KEY, np);
+    if (!lc && nc) localStorage.setItem(CRED_KEY, nc);
+  } catch {
+    /* localStorage hi band hai — next boot phir try hoga */
+  }
+};
+
+// Explicit logout / admin-deactivation — profile + credentials DONO layers
+// clear (localStorage + native vault), warna next boot par session wapas aa jayega
 export const clearSession = (): void => {
   try {
     localStorage.removeItem(PROFILE_KEY);
@@ -67,4 +161,6 @@ export const clearSession = (): void => {
   } catch {
     /* ignore */
   }
+  vaultRemove(PROFILE_KEY);
+  vaultRemove(CRED_KEY);
 };
