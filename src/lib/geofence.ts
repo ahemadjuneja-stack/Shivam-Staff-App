@@ -47,24 +47,26 @@ export function lastGpsFix(): { lat: number; lng: number; at: number } | null {
 }
 
 // Shop center: BOSS-LOCKED coords (SHOP_CENTER_LOCKED) — hamesha available,
-// OFFLINE me bhi (koi config fetch wait nahi, geofence day-one LIVE).
-// Sirf radius remote config ('config/shop') se aata hai — 20..1000m valid
-// window ke saath, warna default 100m. Lat/lng config se KABHI nahi leta
-// (Boss: "Aur koi nahi dena" — center permanently locked).
+// OFFLINE me bhi. ZERO-NET (Boss order 2026-10-26: "net slowly chal raha ho
+// tab bhi open hona chahiye"): center + default radius TURANT return hote
+// hain — location gate kabhi Firestore ka wait NAHI karta (pehle radius
+// getDoc await gate ko slow net par rok deta tha). Config radius BACKGROUND
+// me aata hai — wahi object mutate hota hai, isliye gate ka centerRef bhi
+// fresh radius khud dekh leta hai (koi re-fetch nahi). Lat/lng config se
+// KABHI nahi leta (Boss: "Aur koi nahi dena" — center permanently locked).
 let shopCenter: { lat: number; lng: number; radius: number } | undefined;
 async function loadShopCenter(): Promise<{ lat: number; lng: number; radius: number }> {
   if (shopCenter !== undefined) return shopCenter;
-  let radius = DEFAULT_RADIUS_M;
-  try {
-    const snap = await getDoc(doc(db, 'config', 'shop'));
-    if (snap.exists()) {
+  shopCenter = { lat: SHOP_CENTER_LOCKED.lat, lng: SHOP_CENTER_LOCKED.lng, radius: DEFAULT_RADIUS_M };
+  getDoc(doc(db, 'config', 'shop'))
+    .then((snap) => {
+      if (!snap.exists() || !shopCenter) return;
       const r = Number(snap.data().radius);
-      if (Number.isFinite(r) && r >= 20 && r <= 1000) radius = r;
-    }
-  } catch {
-    // offline — locked center + default radius se kaam chalta hai
-  }
-  shopCenter = { lat: SHOP_CENTER_LOCKED.lat, lng: SHOP_CENTER_LOCKED.lng, radius };
+      if (Number.isFinite(r) && r >= 20 && r <= 1000) shopCenter.radius = r;
+    })
+    .catch(() => {
+      /* offline / slow net — locked center + default radius se kaam chalta hai */
+    });
   return shopCenter;
 }
 

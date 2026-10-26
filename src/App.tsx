@@ -83,6 +83,20 @@ export default function App() {
   });
   const [watchUid, setWatchUid] = useState<string | null>(null);
 
+  // SLOW-NET OPEN FALLBACK (Boss order 2026-10-26: "net slowly chal raha ho
+  // tab bhi open hona chahiye"): cached profile na ho aur network bahut slow
+  // ho to spinner KABHI-KA nahi banta — 10s baad login screen dikhti hai
+  // (interactive, retry possible) instead of infinite "Loading". Normal case
+  // (cached profile) me ye effect chalta hi nahi — loading pehle hi false.
+  useEffect(() => {
+    if (!loading) return;
+    const t = window.setTimeout(() => {
+      diagLog('loading_fallback');
+      setLoading(false);
+    }, 10000);
+    return () => window.clearTimeout(t);
+  }, [loading]);
+
   // BOOT RESTORE (never-logout layer 2): WebView storage wipe hone par native
   // SessionVault (SharedPreferences) se cached profile + creds wapas aate
   // hain — pehle render se hi. onAuthStateChanged iske BAAD hi register hota
@@ -301,6 +315,25 @@ export default function App() {
     clearSession();
     setProfile(null);
   };
+
+  // NET-WAAPAS RE-LOGIN (slow-net layer 2): network restore hote hi chupke
+  // se silent re-login — Firebase session turant wapas, staff ko kuch nahi
+  // karna padta. Sirf tab jab cached session ho aur currentUser null ho.
+  useEffect(() => {
+    const onOnline = () => {
+      try {
+        if (auth.currentUser) return; // session already zinda hai
+        if (!localStorage.getItem(PROFILE_KEY)) return; // logged-out — login khud karega
+        if (!readStoredCredentials()) return;
+        diagLog('silent_online_retry');
+        trySilentReLogin(1);
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
 
   // Hardware back: in-app history => smooth slide back; root pe => app background (exit nahi)
   useEffect(() => {

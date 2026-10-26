@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { fetchLocation } from '../lib/reporting';
 import { getShopCenter, distanceToShopM, noteGpsFix } from '../lib/geofence';
 import { LocationGuard } from '../lib/locationGuard';
+import { diagLog } from '../lib/diag';
 
 // ============================================================
 // LOCATION GATE (Boss order 2026-10-26 + English screen 2026-10-26):
@@ -29,7 +30,16 @@ import { LocationGuard } from '../lib/locationGuard';
 //  (location wapas ON = app khud recover).
 //
 //  MANAGER: bypass — kahin se bhi open.
-// GPS ko net nahi chahiye — permission + GPS only.
+//
+//  SLOW-NET + NO-CACHE RULE (Boss order 2026-10-26: "net slowly chal raha ho
+//  tab bhi open hona chahiye, magar bina location on nahi hona chahiye, koi
+//  bhi cache local me save mat karna"):
+//    - Gate ka FAISLA 100% LOCAL hai: GPS fix (maximumAge:0, cached fix
+//      KABHI nahi) + native location-service state. KOI network call gate
+//      ko block nahi karti (shop center LOCKED coords se turant milta hai).
+//    - KOI gate/permission state localStorage me save nahi hoti — har open
+//      par FRESH check (state memory me hai, cold start = naya check).
+//    - Net slow ho to bhi gate waise hi chalta hai — GPS ko net nahi chahiye.
 // ============================================================
 
 const AUTO_DUTY_FLAG = 'shivam_auto_duty_request';
@@ -78,6 +88,8 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   radiusCheckRef.current = isWorker;
   const [state, setState] = useState<GateState>(gated ? { kind: 'checking' } : { kind: 'pass' });
   const [radius, setRadius] = useState<number>(100);
+  const radiusRef = useRef<number>(100);
+  radiusRef.current = radius;
   const retryTimer = useRef<number | null>(null);
   const mounted = useRef(true);
   const runCheckRef = useRef<() => void>(() => {});
@@ -219,6 +231,9 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
         noteGpsFix(pos.coords.latitude, pos.coords.longitude, Date.now());
         const k = stateKindRef.current;
         const center = centerRef.current;
+        // RADIUS LIVE-SYNC: config radius background me load ho jaye to gate
+        // ka UI bhi turant update (center object wahi mutated reference hai)
+        if (center && center.radius !== radiusRef.current) setRadius(center.radius);
         if (k === 'gps-off-live' || k === 'gps') {
           // RECOVER: location wapas ON — watch fresh start + full gate re-run
           stopWatch();
@@ -299,7 +314,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
           gpsOffTimerRef.current = null;
         }, 30000);
       },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 25000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 25000 } // maximumAge:0 — NO-CACHE (Boss rule): sirf fresh fixes
     );
   };
 
@@ -419,12 +434,14 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     // hai — shop radius check NAHI — par location access + GPS fix ZARURI.
     if (!radiusCheckRef.current) {
       setState({ kind: 'pass' });
+      diagLog('gate_pass', { mode: 'sales' }); // NO-CACHE proof: ye event sirf FRESH fix ke baad aata hai
       startLiveWatch(center); // live monitoring sales pe bhi — location band = lock
       return;
     }
     const distM = distanceToShopM(loc.lat, loc.lng, center);
     if (distM <= center.radius) {
       setState({ kind: 'pass' });
+      diagLog('gate_pass', { mode: 'radius', distM: Math.round(distM) });
       requestAutoDutyOn(); // 100m andar + access = auto duty ON (Home uthata hai)
       startLiveWatch(center); // BOSS RULE: app chalte-chalte bhi location monitor rahe
     } else {

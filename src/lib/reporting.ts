@@ -63,12 +63,29 @@ export async function fetchAppVersionInfo(): Promise<{ appVersion: string; appVe
   return { appVersion: '1.0.0', appVersionCode: 1 };
 }
 
-export async function fetchLocation(): Promise<{ lat: number; lng: number; at: number; accuracy?: number } | null> {
-  try {
-    if ('geolocation' in navigator) {
-      const pos: any = await new Promise((resolve) => {
-        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000, enableHighAccuracy: true });
-      });
+// STRICT FRESH FIX (Boss order 2026-10-26: "bina location on nahi hona chahiye,
+// koi bhi cache local me save mat karna"): maximumAge:0 — CACHED GPS fix se
+// gate KABHI pass nahi hota, har baar device se taaza fix. Weak-signal
+// (TIMEOUT code 3) par ek retry — PERMISSION_DENIED (code 1) / POSITION_
+// UNAVAILABLE (code 2 = location service band) par TURANT fail (retry bekaar).
+// GPS ko net nahi chahiye — slow internet par bhi ye chalta hai.
+export function fetchLocation(opts?: { timeoutMs?: number; retries?: number }): Promise<{ lat: number; lng: number; at: number; accuracy?: number } | null> {
+  const timeoutMs = opts?.timeoutMs ?? 6000;
+  const maxRetries = opts?.retries ?? 1;
+  const tryOnce = (): Promise<any> =>
+    new Promise((resolve) => {
+      if (!('geolocation' in navigator)) return resolve(null);
+      navigator.geolocation.getCurrentPosition(
+        resolve,
+        (e) => resolve({ __err: e }),
+        { timeout: timeoutMs, enableHighAccuracy: true, maximumAge: 0 }
+      );
+    });
+  return (async () => {
+    let attempts = 0;
+    for (;;) {
+      attempts += 1;
+      const pos: any = await tryOnce();
       if (pos && pos.coords) {
         return {
           lat: pos.coords.latitude,
@@ -77,11 +94,10 @@ export async function fetchLocation(): Promise<{ lat: number; lng: number; at: n
           accuracy: typeof pos.coords.accuracy === 'number' ? pos.coords.accuracy : undefined
         };
       }
+      const code = pos && pos.__err ? Number(pos.__err.code) : -1;
+      if (code === 1 || code === 2 || attempts > maxRetries) return null;
     }
-  } catch (e) {
-    // ignore silently
-  }
-  return null;
+  })();
 }
 
 export async function reportDeviceAndLocation(uid: string) {
