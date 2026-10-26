@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
-import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { auth, db } from './firebase';
 import { PROFILE_KEY, readStoredCredentials, syncCredentialsFromDoc, clearSession, storeProfile, ensureSessionRestored } from './lib/session';
+import { resolveUserDocByPhone } from './lib/userResolve';
 import { diagInitVersion, diagSetIdentity, diagLog } from './lib/diag';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
@@ -19,6 +20,18 @@ import BrandHeader from './components/BrandHeader';
 // session RAKHO (kisi doc-format surprise se galti ka logout kabhi nahi).
 const isExplicitInactive = (s: unknown): boolean =>
   typeof s === 'string' && s.length > 0 && s !== 'active';
+
+// Profile builder — users doc se UserProfile (role-mapping ek hi jagah).
+// Task 59-b adoption paths bhi isi se profile banate hain.
+const buildProfileFromDoc = (docId: string, d: any): UserProfile => ({
+  uid: docId,
+  name: d?.name || 'Staff',
+  mobile: d?.phone || d?.mobile || '',
+  city: d?.city || 'Main',
+  role: (d?.role === 'sales' || d?.role === 'salesman' || d?.role === 'sales_manager') ? 'sales' : (d?.role === 'manager' || d?.role === 'admin') ? 'manager' : 'worker',
+  status: 'active',
+  createdAt: typeof d?.createdAt === 'number' ? d.createdAt : (typeof d?.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now())
+});
 
 // SILENT RE-LOGIN RETRY (never-logout layer 3): cold start par data
 // connection aksar late hota hai — pehli koshish network fail ho to 4s/12s/30s
@@ -150,30 +163,43 @@ export default function App() {
               diagSetIdentity(p.mobile);
               diagLog('doc_ok', { status: String(data.status || 'missing'), role: String(data.role || 'missing') });
             } else {
-              // admin ne deactivate/delete kiya — REAL logout (profile + creds clear)
-              diagLog('deactivate_logout', { status: String(data.status) });
-              clearSession();
-              setProfile(null);
+              // DUPLICATE-ACCOUNT ADOPTION (Task 59-b — Boss phone 9898904578):
+              // auth-uid doc inactive hai, par same phone ka ACTIVE doc ho sakta
+              // hai (re-registration duplicate case — standard email duplicate
+              // ke Auth account ke paas hai). Active doc mila to USSE adopt karo
+              // (logout NAHI — watcher bhi usi doc ko watch karega), warna real
+              // admin deactivate = REAL logout.
+              const email = firebaseUser.email || '';
+              const resolved = await resolveUserDocByPhone(email.split('@')[0]);
+              if (resolved && !isExplicitInactive(resolved.data?.status)) {
+                syncCredentialsFromDoc(resolved.data);
+                const p = buildProfileFromDoc(resolved.id, resolved.data);
+                setWatchUid(resolved.id);
+                setProfile(p);
+                storeProfile(p);
+                diagSetIdentity(p.mobile);
+                diagLog('uid_mismatch_adopted', { authStatus: String(data.status), role: String(resolved.data?.role || 'missing') });
+              } else {
+                // admin ne deactivate/delete kiya — REAL logout (profile + creds clear)
+                diagLog('deactivate_logout', { status: String(data.status) });
+                clearSession();
+                setProfile(null);
+              }
             }
           } else {
             const email = firebaseUser.email || '';
             const phoneFromEmail = email.split('@')[0];
             if (phoneFromEmail) {
-              const q = query(collection(db, 'users'), where('phone', '==', phoneFromEmail));
-              const snap = await getDocs(q);
-              if (!snap.empty) {
-                const d = snap.docs[0].data();
+              // phone-fallback bhi ACTIVE-doc resolver se (blind docs[0] nahi —
+              // duplicate hone par galat doc uth sakta tha)
+              const resolved = await resolveUserDocByPhone(phoneFromEmail);
+              if (resolved) {
+                const d = resolved.data;
                 if (!isExplicitInactive(d.status)) {
                   syncCredentialsFromDoc(d);
-                  const p: UserProfile = {
-                    uid: snap.docs[0].id,
-                    name: d.name || 'Staff',
-                    mobile: d.phone || d.mobile || phoneFromEmail,
-                    city: d.city || 'Main',
-                    role: (d.role === 'sales' || d.role === 'salesman' || d.role === 'sales_manager') ? 'sales' : (d.role === 'manager' || d.role === 'admin') ? 'manager' : 'worker',
-                    status: 'active',
-                    createdAt: typeof d.createdAt === 'number' ? d.createdAt : (typeof d.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now())
-                  };
+                  const p = buildProfileFromDoc(resolved.id, d);
+                  p.mobile = p.mobile || phoneFromEmail;
+                  setWatchUid(resolved.id);
                   setProfile(p);
                   storeProfile(p);
                   diagSetIdentity(p.mobile);
@@ -240,6 +266,7 @@ export default function App() {
           // Pending approval (profile abhi null) -> kuch mat karo, approval ka wait
           // Logged-in staff ko admin ne deactivate/delete kiya -> REAL logout
           if (localStorage.getItem(PROFILE_KEY)) {
+            diagLog('watcher_deactivate', { status: String(data.status) });
             auth.signOut().catch(() => {});
             clearSession();
             setProfile(null);

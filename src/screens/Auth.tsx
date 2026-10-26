@@ -1,9 +1,5 @@
 import { useState } from 'react';
 import {
-  collection,
-  query,
-  where,
-  getDocs,
   setDoc,
   doc
 } from 'firebase/firestore';
@@ -13,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { storeCredentials } from '../lib/session';
+import { resolveUserDocByPhone } from '../lib/userResolve';
 import { UserProfile } from '../types';
 import ShivamLogo from '../components/ShivamLogo';
 
@@ -49,6 +46,60 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
     return err?.message || 'Authentication failed. Please try again.';
   };
 
+  // LOGIN CORE (Task 59-b): profile phone-resolver se ACTIVE doc prefer karke
+  // (blind docs[0] nahi — duplicate registration me docs[0] rejected doc utha
+  // sakta tha). signIn par Auth account jo bhi ho, profile hamesha ACTIVE doc
+  // se banega.
+  const doLogin = async (phone: string, pinCode: string) => {
+    const email = getEmail(phone);
+    const password = getPassword(pinCode);
+
+    await signInWithEmailAndPassword(auth, email, password);
+    // NEVER-LOGOUT (Boss rule 2026-10-26): successful auth = credentials save —
+    // app restart par session restore fail ho to App.tsx in se SILENT re-login
+    // karta hai, login screen dobara kabhi nahi dikhti
+    storeCredentials(email, password);
+
+    const resolved = await resolveUserDocByPhone(phone);
+    const userData: any = resolved ? resolved.data : null;
+    const userUid = resolved ? resolved.id : auth.currentUser?.uid || '';
+
+    if (userData) {
+      if (userData.status === 'pending') {
+        setMode('pending');
+        return;
+      }
+      if (userData.status === 'deleted') {
+        setErrorMsg('This account has been removed by the admin.');
+        return;
+      }
+      if (userData.status === 'rejected') {
+        setErrorMsg('Your registration has been rejected by admin.');
+        return;
+      }
+      if (userData.status === 'active') {
+        const profile: UserProfile = {
+          uid: userUid,
+          name: userData.name || 'Staff',
+          mobile: userData.phone || userData.mobile || phone,
+          city: userData.city || 'Main',
+          role: (userData.role === 'sales' || userData.role === 'salesman' || userData.role === 'sales_manager') ? 'sales' : (userData.role === 'manager' || userData.role === 'admin') ? 'manager' : 'worker',
+          status: 'active',
+          createdAt:
+            typeof userData.createdAt === 'number'
+              ? userData.createdAt
+              : typeof userData.createdAt === 'string'
+              ? new Date(userData.createdAt).getTime()
+              : Date.now()
+        };
+        onLoginSuccess(profile);
+        return;
+      }
+    }
+
+    setMode('pending');
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -66,64 +117,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
     }
 
     try {
-      const email = getEmail(mobile);
-      const password = getPassword(pin);
-
-      await signInWithEmailAndPassword(auth, email, password);
-      // NEVER-LOGOUT (Boss rule 2026-10-26): successful auth = credentials save —
-      // app restart par session restore fail ho to App.tsx in se SILENT re-login
-      // karta hai, login screen dobara kabhi nahi dikhti
-      storeCredentials(email, password);
-
-      const q = query(
-        collection(db, 'users'),
-        where('phone', '==', mobile.trim())
-      );
-      const querySnap = await getDocs(q);
-
-      let userData: any = null;
-      let userUid = auth.currentUser?.uid || '';
-
-      if (!querySnap.empty) {
-        const userDoc = querySnap.docs[0];
-        userData = userDoc.data();
-        userUid = userDoc.id;
-      }
-
-      if (userData) {
-        if (userData.status === 'pending') {
-          setMode('pending');
-          return;
-        }
-        if (userData.status === 'deleted') {
-          setErrorMsg('This account has been removed by the admin.');
-          return;
-        }
-        if (userData.status === 'rejected') {
-          setErrorMsg('Your registration has been rejected by admin.');
-          return;
-        }
-        if (userData.status === 'active') {
-          const profile: UserProfile = {
-            uid: userUid,
-            name: userData.name || 'Staff',
-            mobile: userData.phone || userData.mobile || mobile.trim(),
-            city: userData.city || 'Main',
-            role: (userData.role === 'sales' || userData.role === 'salesman' || userData.role === 'sales_manager') ? 'sales' : (userData.role === 'manager' || userData.role === 'admin') ? 'manager' : 'worker',
-            status: 'active',
-            createdAt:
-              typeof userData.createdAt === 'number'
-                ? userData.createdAt
-                : typeof userData.createdAt === 'string'
-                ? new Date(userData.createdAt).getTime()
-                : Date.now()
-          };
-          onLoginSuccess(profile);
-          return;
-        }
-      }
-
-      setMode('pending');
+      await doLogin(mobile.trim(), pin.trim());
     } catch (err: any) {
       setErrorMsg(friendlyError(err));
     }
@@ -148,6 +142,60 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
     try {
       const email = getEmail(mobile);
       const password = getPassword(pin);
+
+      // DUPLICATE-REGISTRATION GUARD + RE-LINK (Task 59-b — Boss phone
+      // 9898904578 ka root cause): same phone ka users doc pehle se hai to
+      // naya Auth account ban kar DUSRA doc banana = rejected duplicate =
+      // logout loop. Ab: naya Auth account banake EXISTING doc ko re-link
+      // karte hain (naya duplicate doc KABHI nahi banta).
+      const existing = await resolveUserDocByPhone(mobile.trim());
+      const st = String(existing?.data?.status || '');
+      if (existing && st === 'deleted') {
+        setErrorMsg('This account has been removed by the admin.');
+        return;
+      }
+      if (existing) {
+        // ACTIVE account re-link par security: jo PIN daala wo doc ke CURRENT
+        // pin se match hona chahiye (warna koi bhi phone number daal kar kisi
+        // ka active account takeover nahi kar sakta). PIN bhool gaye -> admin
+        // dashboard se PIN reset karega, phir re-link ho jayega.
+        if (st === 'active' && String(existing.data?.pin || '') !== pin.trim()) {
+          setErrorMsg('Enter your current PIN to restore access. Contact admin if PIN is forgotten.');
+          return;
+        }
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, email, password);
+          storeCredentials(email, password);
+          // RE-LINK: existing doc hi update (doc ID same rehta hai — App.tsx ka
+          // phone-fallback/adopter isko utha lega). Rejected = fresh approval
+          // request (pending); active/pending apna status rakhta hai.
+          await setDoc(
+            doc(db, 'users', existing.id),
+            {
+              pin: pin.trim(),
+              uid: cred.user.uid,
+              ...(st === 'rejected' ? { status: 'pending' } : {})
+            },
+            { merge: true }
+          );
+          if (st === 'active') {
+            // re-linked active account — seedha andar (naya Auth password wahi
+            // PIN hai jo abhi set hua)
+            await doLogin(mobile.trim(), pin.trim());
+          } else {
+            setMode('pending');
+          }
+        } catch (e: any) {
+          // email-already-in-use = Auth account zinda hai (duplicate nahi ban
+          // sakta) — staff seedha login karega (resolver ACTIVE doc uthayega)
+          setErrorMsg(
+            st === 'rejected'
+              ? 'Your registration has been rejected by admin. Please contact the admin.'
+              : 'This mobile number is already registered. Please login.'
+          );
+        }
+        return;
+      }
 
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       const uid = cred.user.uid;
