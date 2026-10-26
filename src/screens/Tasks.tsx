@@ -1,18 +1,17 @@
 import { useMemo, useState, useEffect } from 'react';
 import {
   collection,
-  doc,
   getDocs,
   onSnapshot,
   query,
   where,
-  addDoc,
-  runTransaction
+  addDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, Task } from '../types';
-import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF } from '../lib/credit';
-import { txHistoryEntry } from '../lib/history';
+import { MAX_ACTIVE_TASKS_PER_STAFF } from '../lib/credit';
+import TaskVerifyModal from '../components/TaskVerifyModal';
+import { verifyTask } from '../lib/taskVerify';
 
 // ============================================================
 // TASKS SCREEN (Boss order 2026-10-25)
@@ -137,34 +136,31 @@ export default function TasksScreen({ profile, slideCls }: TasksScreenProps) {
     }
   };
 
-  // VERIFY (Boss rule): sirf yahi manager jo task diya; tap -> English Yes/No
-  const handleVerify = (t: Task) => {
+  // VERIFY (Boss rule): sirf yahi manager jo task diya; tap -> verify modal.
+  // BUG FIX (Boss order 2026-10-26): pehle window.confirm tha — box band
+  // karne (Cancel) par bhi 'false' = NO samajh ke turant -5 cut jata tha,
+  // sirf dekhne ke liye click karne par bhi! Ab decision SIRF modal ke
+  // explicit YES/NO buttons par hota hai — dismiss par KUCH NAHI hota,
+  // task pending rehta hai, koi point change nahi.
+  const [verifyTarget, setVerifyTarget] = useState<Task | null>(null);
+  const [verifyBusy, setVerifyBusy] = useState(false);
+
+  const openVerify = (t: Task) => {
     if (t.status !== 'pending' || !isManager) return;
-    const yes = window.confirm(`Task: "${t.title}"\nAssigned to: ${t.toName}\n\nIs this task complete?`);
-    const onTime = Date.now() <= t.deadlineAt;
-    const delta = yes ? (onTime ? CREDIT_POINTS.TASK_EARLY : CREDIT_POINTS.TASK_LATE) : CREDIT_POINTS.TASK_REJECT;
-    runTransaction(db, async (tx) => {
-      // NOTE: transaction me saare reads PEHLE, phir writes (Firestore rule)
-      const cref = doc(db, 'credit_points', t.toUid);
-      const cs = await tx.get(cref);
-      const cur = cs.exists() ? Number(cs.data().taskScore) || 0 : 0;
-      tx.update(doc(db, 'tasks', t.id!), {
-        status: yes ? 'completed' : 'rejected',
-        verifiedAt: Date.now(),
-        pointsDelta: delta
-      });
-      tx.set(cref, { taskScore: cur + delta, updatedAt: Date.now() }, { merge: true });
-      // Credit history (Boss Task 51): task outcome score ke saath atomic
-      txHistoryEntry(
-        tx,
-        t.toUid,
-        'task',
-        yes
-          ? (onTime ? `Task completed on time: "${t.title}"` : `Task completed late: "${t.title}"`)
-          : `Task marked NO by manager: "${t.title}"`,
-        delta
-      );
-    }).catch((err: any) => window.alert('Verify failed: ' + err.message));
+    setVerifyTarget(t);
+  };
+
+  const decideVerify = async (yes: boolean) => {
+    if (!verifyTarget || verifyBusy) return;
+    setVerifyBusy(true);
+    try {
+      await verifyTask(verifyTarget, yes);
+      setVerifyTarget(null);
+    } catch (err: any) {
+      window.alert('Verify failed: ' + err.message);
+    } finally {
+      setVerifyBusy(false);
+    }
   };
 
   const statusChip = (t: Task) => {
@@ -293,7 +289,7 @@ export default function TasksScreen({ profile, slideCls }: TasksScreenProps) {
             return (
               <button
                 key={t.id}
-                onClick={() => handleVerify(t)}
+                onClick={() => openVerify(t)}
                 disabled={!canTap}
                 className={`w-full text-left bg-[#0C1628] border rounded-[22px] p-4 shadow-[0_4px_16px_rgba(0,0,0,0.3)] transition active:scale-[0.99] hover:bg-slate-800/40 ${
                   canTap ? 'border-[#2A3F68]' : 'border-[#1D2B47]'
@@ -324,6 +320,14 @@ export default function TasksScreen({ profile, slideCls }: TasksScreenProps) {
           })
         )}
       </div>
+
+      {/* Verify modal — dismiss (X/backdrop) = NO action, task stays pending */}
+      <TaskVerifyModal
+        task={verifyTarget}
+        busy={verifyBusy}
+        onClose={() => setVerifyTarget(null)}
+        onDecide={decideVerify}
+      />
     </div>
   );
 }

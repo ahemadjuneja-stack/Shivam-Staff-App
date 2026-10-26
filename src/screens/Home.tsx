@@ -36,6 +36,8 @@ import {
 } from '../lib/integrity';
 import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 'lucide-react';
 import { consumeAutoDutyRequest } from './LocationGate';
+import TaskVerifyModal from '../components/TaskVerifyModal';
+import { verifyTask } from '../lib/taskVerify';
 
 // ============================================================
 // NEW HOME SCREEN (Boss order 2026-10-25 — demo screenshot style)
@@ -685,33 +687,30 @@ export default function Home({ profile, onLogout }: HomeProps) {
     }
   };
 
-  // ---------- Task verify (manager tap -> English Yes/No dialog) ----------
-  const handleVerify = (t: Task) => {
+  // ---------- Task verify (manager tap -> verify modal) ----------
+  // BUG FIX (Boss order 2026-10-26): pehle window.confirm tha — box band karne
+  // (Cancel) par bhi 'false' = NO samajh ke turant -5 cut jata tha, sirf
+  // dekhne ke liye click karne par bhi! Ab decision SIRF modal ke explicit
+  // YES/NO buttons par — dismiss par KUCH NAHI hota, task pending rehta hai.
+  const [verifyTarget, setVerifyTarget] = useState<Task | null>(null);
+  const [verifyBusy, setVerifyBusy] = useState(false);
+
+  const openVerify = (t: Task) => {
     if (t.status !== 'pending' || !isManager) return;
-    const yes = window.confirm(`Task: "${t.title}"\nAssigned to: ${t.toName}\n\nIs this task complete?`);
-    const onTime = Date.now() <= t.deadlineAt;
-    const delta = yes ? (onTime ? CREDIT_POINTS.TASK_EARLY : CREDIT_POINTS.TASK_LATE) : CREDIT_POINTS.TASK_REJECT;
-    runTransaction(db, async (tx) => {
-      const cref = doc(db, 'credit_points', t.toUid);
-      const cs = await tx.get(cref);
-      const cur = cs.exists() ? Number(cs.data().taskScore) || 0 : 0;
-      tx.update(doc(db, 'tasks', t.id!), {
-        status: yes ? 'completed' : 'rejected',
-        verifiedAt: Date.now(),
-        pointsDelta: delta
-      });
-      tx.set(cref, { taskScore: cur + delta, updatedAt: Date.now() }, { merge: true });
-      // Credit history (Boss Task 51): task outcome score ke saath atomic
-      txHistoryEntry(
-        tx,
-        t.toUid,
-        'task',
-        yes
-          ? (onTime ? `Task completed on time: "${t.title}"` : `Task completed late: "${t.title}"`)
-          : `Task marked NO by manager: "${t.title}"`,
-        delta
-      );
-    }).catch((err: any) => window.alert('Verify failed: ' + err.message));
+    setVerifyTarget(t);
+  };
+
+  const decideVerify = async (yes: boolean) => {
+    if (!verifyTarget || verifyBusy) return;
+    setVerifyBusy(true);
+    try {
+      await verifyTask(verifyTarget, yes);
+      setVerifyTarget(null);
+    } catch (err: any) {
+      window.alert('Verify failed: ' + err.message);
+    } finally {
+      setVerifyBusy(false);
+    }
   };
 
   const pendingTasks = tasks.filter((t) => t.status === 'pending');
@@ -956,7 +955,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
             return (
               <button
                 key={t.id}
-                onClick={() => handleVerify(t)}
+                onClick={() => openVerify(t)}
                 disabled={!canTap}
                 className="glass-card relative w-full overflow-hidden rounded-[20px] px-4 py-3.5 text-left transition active:scale-[0.985]"
               >
@@ -1082,6 +1081,14 @@ export default function Home({ profile, onLogout }: HomeProps) {
           OFF
         </button>
       </div>
+
+      {/* Verify modal — dismiss (X/backdrop) = NO action, task stays pending */}
+      <TaskVerifyModal
+        task={verifyTarget}
+        busy={verifyBusy}
+        onClose={() => setVerifyTarget(null)}
+        onDecide={decideVerify}
+      />
 
     </div>
   );
