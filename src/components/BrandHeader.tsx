@@ -9,7 +9,7 @@ import React from 'react';
 export default function BrandHeader() {
   return (
     <header
-      className="sticky top-0 z-40 flex items-center px-4 pb-2.5 pointer-events-none select-none"
+      className="sticky top-0 z-[80] flex items-center px-4 pb-2.5 pointer-events-none select-none"
       style={{
         paddingTop: 'calc(var(--sat) + 6px)',
         background:

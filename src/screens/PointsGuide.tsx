@@ -10,6 +10,7 @@
 // 100% English UI (Boss permanent rule).
 // ============================================================
 import { CREDIT_POINTS, CREDIT_DAILY, HOURLY_ON_DUTY_CUT, MAX_CREDIT, POINTS_PER_STAR } from '../lib/credit';
+import { useSwipeBack, SWIPE_OVERLAY_STYLE } from '../lib/swipeBack';
 
 interface PointsGuideProps {
   onBack: () => void;
@@ -18,6 +19,9 @@ interface PointsGuideProps {
 const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
 
 export default function PointsGuide({ onBack }: PointsGuideProps) {
+  // BOSS RULE: back button kahi nahi — sirf left-edge slide se band hota hai
+  // (screen ungli ke saath slide hoti hai, neeche Home reveal hota hai).
+  const slideRef = useSwipeBack(onBack);
   const ups: { label: string; desc: string; delta: number }[] = [
     { label: 'Task completed on time', desc: 'Manager verified your task before the deadline', delta: CREDIT_POINTS.TASK_EARLY },
     { label: 'Back from outside on time', desc: 'You returned within the time you told the manager', delta: CREDIT_POINTS.OUTSIDE_ONTIME },
@@ -38,21 +42,16 @@ export default function PointsGuide({ onBack }: PointsGuideProps) {
   ];
 
   return (
-    <div className="relative min-h-screen text-slate-100 px-4 pb-16">
+    <div
+      ref={slideRef}
+      className="fixed inset-0 z-[60] overflow-y-auto text-slate-100 px-4 pb-10"
+      style={SWIPE_OVERLAY_STYLE}
+    >
       <div className="ambient-orb -top-12 -right-16 h-64 w-64 bg-amber-400/10" />
       <div className="ambient-orb top-[40%] -left-20 h-56 w-56 bg-emerald-400/10" />
 
-      {/* Header */}
-      <div className="relative z-10 flex items-center gap-3 pt-5 pb-4">
-        <button
-          onClick={onBack}
-          className="glass-card flex h-10 w-10 items-center justify-center rounded-2xl text-slate-200 active:scale-95 transition"
-          aria-label="Back"
-        >
-          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+      {/* Header — koi back button nahi (Boss rule: sirf slide se band) */}
+      <div className="relative z-10 pb-4">
         <div>
           <h1 className="text-[18px] font-bold text-white">Points Guide</h1>
           <p className="text-[11px] font-semibold text-slate-400">How your credit points go up and down</p>

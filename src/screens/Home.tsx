@@ -922,15 +922,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
     .filter((t) => t.status !== 'pending')
     .sort((a, b) => (b.verifiedAt || b.createdAt) - (a.verifiedAt || a.createdAt));
 
-  // POINTS GUIDE page (Boss Task 51) — sab hooks ke BAAD early return (safe)
-  if (showGuide) {
-    return <PointsGuide onBack={() => setShowGuide(false)} />;
-  }
-
-  // PROFILE SCREEN (Boss order 2026-10-27): naam par tap -> profile (photo add/edit)
-  if (showProfile) {
-    return <ProfileScreen profile={profile} onBack={() => setShowProfile(false)} />;
-  }
+  // POINTS GUIDE + PROFILE — SLIDE OVERLAYS (Boss rule 2026-10-27: back button
+  // kahi nahi hona chahiye, sirf left-edge slide / hardware-back se band hota
+  // hai). Home yahan MOUNTED rehta hai — slide karte hi neeche Home reveal
+  // hota hai (iOS-style) aur wapas aane par turant wahi state milti hai.
+  // Hooks sab pehle chal chuke hote hain — ye conditional render safe hai.
 
   return (
     <div className="relative min-h-screen text-slate-100 px-4 pb-28">
@@ -1488,6 +1484,12 @@ export default function Home({ profile, onLogout }: HomeProps) {
         onClose={() => setVerifyTarget(null)}
         onDecide={decideVerify}
       />
+
+      {/* POINTS GUIDE — slide overlay (Boss rule: koi back button nahi) */}
+      {showGuide && <PointsGuide onBack={() => setShowGuide(false)} />}
+
+      {/* PROFILE — naam tap -> slide overlay (photo add/edit, slide se band) */}
+      {showProfile && <ProfileScreen profile={profile} onBack={() => setShowProfile(false)} />}
 
     </div>
   );

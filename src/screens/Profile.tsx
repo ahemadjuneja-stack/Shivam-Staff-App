@@ -3,7 +3,8 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile } from '../types';
 import Avatar from '../components/Avatar';
-import { ChevronLeft, Camera, Loader2, CheckCircle2 } from 'lucide-react';
+import { Camera, Loader2, CheckCircle2 } from 'lucide-react';
+import { useSwipeBack, SWIPE_OVERLAY_STYLE } from '../lib/swipeBack';
 
 // ============================================================
 // PROFILE SCREEN (Boss order 2026-10-27): "har salesman staff manager sabke
@@ -25,6 +26,10 @@ export default function ProfileScreen({
   const [busy, setBusy] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // BOSS RULE: back button kahi nahi — sirf left-edge slide se band hota hai
+  // (screen ungli ke saath slide hoti hai, neeche Home reveal hota hai).
+  // Android hardware back bhi isi screen ko band karta hai.
+  const slideRef = useSwipeBack(onBack);
 
   // users doc live — dashboard/ dusre device se badle photo to bhi sync
   useEffect(() => {
@@ -100,17 +105,15 @@ export default function ProfileScreen({
     profile.role === 'manager' ? 'Manager' : profile.role === 'sales' ? 'Salesman' : 'Staff';
 
   return (
-    <div className="relative min-h-screen text-slate-100 px-4 pb-28">
+    <div
+      ref={slideRef}
+      className="fixed inset-0 z-[60] overflow-y-auto text-slate-100 px-4"
+      style={SWIPE_OVERLAY_STYLE}
+    >
       <div className="ambient-orb -top-12 -right-16 h-64 w-64 bg-indigo-500/15" />
       <div className="ambient-orb top-[45%] -left-20 h-56 w-56 bg-amber-400/10" />
 
-      <div className="relative z-10 mb-4 flex items-center gap-3 pt-2">
-        <button
-          onClick={onBack}
-          className="glass-card flex items-center gap-1.5 rounded-full px-4 py-2.5 text-[12px] font-extrabold text-slate-200 transition active:scale-95"
-        >
-          <ChevronLeft className="h-4 w-4" /> Back
-        </button>
+      <div className="relative z-10 mb-4">
         <h2 className="text-[16px] font-semibold text-[#B7C5F0]">My Profile</h2>
       </div>
 

@@ -365,11 +365,17 @@ export default function App() {
     return () => window.removeEventListener('online', onOnline);
   }, []);
 
-  // Hardware back: in-app history => smooth slide back; root pe => app background (exit nahi)
+  // Hardware back: slide-overlay khula ho (Profile / Points Guide) to USI screen
+  // ko band karta hai (Boss rule: back button UI me nahi — sirf slide); warna
+  // in-app history => smooth slide back; root pe => app background (exit nahi)
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     let handle: any = null;
     CapApp.addListener('backButton', ({ canGoBack }) => {
+      if (Number(document.body.dataset.swipeOverlay || '0') > 0) {
+        window.dispatchEvent(new CustomEvent('shivam:hw-back'));
+        return;
+      }
       if (canGoBack) {
         window.history.back();
       } else {
