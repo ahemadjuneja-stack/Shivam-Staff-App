@@ -9,7 +9,7 @@
 // se aati hain — future tune par guide AUTOMATIC update (hardcode nahi).
 // 100% English UI (Boss permanent rule).
 // ============================================================
-import { CREDIT_POINTS, CREDIT_DAILY, HOURLY_ON_DUTY_CUT, clamp100 } from '../lib/credit';
+import { CREDIT_POINTS, CREDIT_DAILY, HOURLY_ON_DUTY_CUT, MAX_CREDIT, POINTS_PER_STAR } from '../lib/credit';
 
 interface PointsGuideProps {
   onBack: () => void;
@@ -62,9 +62,9 @@ export default function PointsGuide({ onBack }: PointsGuideProps) {
       {/* Score explanation */}
       <div className="glass-card intro-rise relative z-10 rounded-[22px] px-4 py-4 text-center">
         <p className="text-[12.5px] leading-relaxed text-slate-300">
-          Your score stays between <b className="text-amber-300">1 and 100</b> — it can never reach zero.
-          Stars are rank-based: the highest total in the team gets <b className="text-amber-300">5 stars</b>,
-          the lowest gets <b className="text-amber-300">1 star</b>.
+          Your score stays between <b className="text-amber-300">1 and {MAX_CREDIT}</b> — it can never reach zero.
+          Stars adjust automatically with your points: every <b className="text-amber-300">{POINTS_PER_STAR} points = 1 star</b>,
+          so <b className="text-amber-300">{MAX_CREDIT} points = 5 stars</b>.
         </p>
       </div>
 

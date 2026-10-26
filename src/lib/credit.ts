@@ -1,8 +1,9 @@
 // ============================================================
-// CREDIT POINTS ENGINE (Boss order 2026-10-25 + TUNE 2026-10-26)
+// CREDIT POINTS ENGINE (Boss order 2026-10-25 + TUNE 2026-10-26 + SCALE 300)
 // "points 3-4 ya 5 hi down ya up karo, 10/10 points nahi kaat sakte"
-// "1 se 100 me points adjust rahe" — ek din me 10 galtiyan bhi score 0
-// NAHI karega (floor 1). Scale 1-100, auto up/down, rank-based stars.
+// Scale ab 1-300 (Boss Task 52: "credit points hum 300 karte hai") —
+// ek din me 10 galtiyan bhi score 0 NAHI karega (floor 1).
+// Stars ab POINTS-BASED: har 60 points = 1 star, 300 points = 5 stars.
 // ============================================================
 import { CreditDoc, PunchRecord } from '../types';
 
@@ -23,6 +24,11 @@ export const CREDIT_POINTS = {
 // Ek manager ek staff pe max ACTIVE (pending) tasks — Boss rule
 export const MAX_ACTIVE_TASKS_PER_STAFF = 5;
 
+// BOSS RULE 2026-10-26 (Task 52): credit scale 1-300. Display "125/300".
+// Stars auto-adjust with points: har 60 points = 1 star -> 300 = 5 stars.
+export const MAX_CREDIT = 300;
+export const POINTS_PER_STAR = 60;
+
 // BOSS RULE 2026-10-26 (Task 51): ON DUTY par har ghante ke 2 points cut.
 // "On duty par har ghante ke 2 points cut karo" — sirf duty lagne se credit
 // nahi badhna chahiye, kaam (tasks) karne se badhna chahiye. Deduction
@@ -36,9 +42,9 @@ export function hourlyCutFor(workedMin: number): { delta: number; hours: number 
   return { delta: hours * HOURLY_ON_DUTY_CUT, hours };
 }
 
-// BOSS rule 2026-10-26: score kabhi 0 nahi gir sakta — floor 1 (1-100 range).
+// BOSS rule: score kabhi 0 nahi gir sakta — floor 1 (1-300 range).
 // "Ek hi din me 10 galatiya ki to credit points 0 ho jayega — aise mat karo"
-export const clamp100 = (n: number): number => Math.max(1, Math.min(100, Math.round(n)));
+export const clampScore = (n: number): number => Math.max(1, Math.min(MAX_CREDIT, Math.round(n)));
 
 // Daily credit deltas — Boss order 2026-10-26 ("har roz badlega, staff time aur
 // behavior ke hisab se up/down"). Time component neeche; behavior pehle se hi
@@ -86,15 +92,13 @@ export function totalOf(doc: Partial<CreditDoc> | null | undefined): number {
   const t = Number(doc?.taskScore) || 0;
   const h = Number(doc?.hoursScore) || 0;
   const d = Number(doc?.dailyScore) || 0;
-  return clamp100(t + h + d);
+  return clampScore(t + h + d);
 }
 
-// Stars RANK-based (Boss: sabse zyada points = 5 stars, sabse kam = 1 star).
-// totals: DESC-sorted credit totals of ALL ranked staff; uid = mera.
-// rank 0 (top) -> 5 stars ... rank n-1 (bottom) -> 1 star.
-export function starsFor(totalsDesc: number[], myIndex: number): number {
-  const n = totalsDesc.length;
-  if (n <= 1) return 5;
-  const rank = Math.max(0, Math.min(n - 1, myIndex));
-  return 5 - Math.round((4 * rank) / (n - 1));
+// Stars POINTS-BASED (Boss Task 52: "app apne aap credit points ke hisab se
+// star adjust karega" — 300 points = 5 stars). Har 60 points = 1 star:
+//   1-59 -> 1 star, 60 -> 2, 120 -> 3, 180 -> 4, 240+ -> 5 stars.
+// (Purana rank-based stars hata — ab ranking ka bharam nahi, points bolte hain.)
+export function starsForPoints(points: number): number {
+  return Math.max(1, Math.min(5, Math.floor((Number(points) || 0) / POINTS_PER_STAR)));
 }

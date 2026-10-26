@@ -21,6 +21,13 @@ export interface CreditHistoryEntry {
 
 export const historyCol = (uid: string) => collection(db, 'credit_points', uid, 'history');
 
+// Local calendar day 'YYYY-MM-DD' (Home daily accrual wala hi format) —
+// today-delta filter isse karta hai (na timestamp timezone confusion).
+export function localYmd(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // Normal (non-transaction) entry — score write ke saath parallel, fail-safe
 export function logCreditHistory(uid: string, type: CreditHistoryEntry['type'], label: string, delta: number) {
   addDoc(historyCol(uid), { type, label, delta, at: Date.now() }).catch(() => {});

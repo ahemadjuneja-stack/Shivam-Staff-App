@@ -16,8 +16,8 @@ import {
 import { db } from '../firebase';
 import { UserProfile, PunchRecord, Task, CreditDoc, OutsideLog } from '../types';
 import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
-import { CREDIT_POINTS, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, clamp100, starsFor, dailyCreditDelta, workedMinutesOnDay, hourlyCutFor } from '../lib/credit';
-import { logCreditHistory, txHistoryEntry } from '../lib/history';
+import { CREDIT_POINTS, MAX_CREDIT, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, clampScore, starsForPoints, dailyCreditDelta, workedMinutesOnDay, hourlyCutFor } from '../lib/credit';
+import { logCreditHistory, txHistoryEntry, historyCol, localYmd } from '../lib/history';
 import PointsGuide from './PointsGuide';
 import { reportDeviceAndLocation } from '../lib/reporting';
 import { sampleGeofence, closeStaleOutsideEvent, lastGpsFix, SAMPLE_MS } from '../lib/geofence';
@@ -298,7 +298,9 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return () => unsub();
   }, []);
 
-  // Live totals + rank stars (top = 5 stars, bottom = 1 star — Boss rule)
+  // Live totals + POINTS-BASED stars (Boss Task 52: har 60 points = 1 star,
+  // 300 = 5 stars — app apne aap credit ke hisab se stars adjust karta hai).
+  // Rank abhi bhi chalta hai (gold star badge me rank number).
   const creditInfo = useMemo(() => {
     const staffUids = Object.entries(staffRoleMap)
       .filter(([, r]) => r === 'worker' || r === 'sales')
@@ -308,13 +310,31 @@ export default function Home({ profile, onLogout }: HomeProps) {
     allCredits.forEach((c) => { if (totals.has(c.uid)) totals.set(c.uid, totalOf(c)); });
     const sorted = [...totals.entries()].map(([uid, total]) => ({ uid, total })).sort((a, b) => b.total - a.total);
     const myIdx = sorted.findIndex((e) => e.uid === profile.uid);
+    const total = myIdx >= 0 ? sorted[myIdx].total : totalOf(creditDoc);
     return {
-      total: myIdx >= 0 ? sorted[myIdx].total : totalOf(creditDoc),
-      stars: starsFor(sorted.map((e) => e.total), myIdx),
+      total,
+      stars: starsForPoints(total),
       rank: myIdx + 1,
       of: sorted.length
     };
   }, [allCredits, staffRoleMap, profile.uid, creditDoc]);
+
+  // Aaj ka credit change (Boss Task 52): history subcollection se aaj ki
+  // entries ka net delta — up = green arrow, down = red arrow, Home pe live.
+  const [todayDelta, setTodayDelta] = useState<number | null>(null);
+  useEffect(() => {
+    if (!profile.uid || profile.role === 'manager') return;
+    const unsub = onSnapshot(historyCol(profile.uid), (snap) => {
+      const today = localYmd(Date.now());
+      let sum = 0;
+      snap.docs.forEach((d) => {
+        const v = d.data() as { delta?: number; at?: number };
+        if (localYmd(Number(v.at) || 0) === today) sum += Number(v.delta) || 0;
+      });
+      setTodayDelta(sum);
+    }, () => setTodayDelta(null));
+    return () => unsub();
+  }, [profile.uid, profile.role]);
 
   // hoursScore updater (worker only): monthly duty on-track/peeche — auto +/-10
   useEffect(() => {
@@ -447,7 +467,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
           const cref = doc(db, 'credit_points', profile.uid);
           const cs = await tx.get(cref);
           const cur = cs.exists() ? Number(cs.data().taskScore) || 0 : 0;
-          tx.set(cref, { taskScore: clamp100(cur + d2), updatedAt: Date.now() }, { merge: true });
+          tx.set(cref, { taskScore: clampScore(cur + d2), updatedAt: Date.now() }, { merge: true });
           // Credit history (Boss Task 51): outside outcome score ke saath atomic
           const outLabel = d2 === CREDIT_POINTS.OUTSIDE_REJECT
             ? 'Outside work rejected by manager'
@@ -754,12 +774,37 @@ export default function Home({ profile, onLogout }: HomeProps) {
                 </svg>
                 <span className="absolute text-[13.5px] font-black text-[#3B2302]">{creditInfo.rank}</span>
               </div>
+              {/* Credit stars (Task 52): har 60 points = 1 star, 300 = 5 stars */}
+              <div className="mt-1 flex items-center gap-[1.5px]">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <svg key={i} viewBox="0 0 24 24" className={`h-[11px] w-[11px] ${i <= creditInfo.stars ? 'text-amber-300' : 'text-slate-600/70'}`} fill="currentColor">
+                    <path d="M12 1.7l3.1 6.4 7 1-5 4.9 1.2 7-6.3-3.3-6.3 3.3 1.2-7-5-4.9 7-1z" />
+                  </svg>
+                ))}
+              </div>
               <button
                 onClick={() => setShowGuide(true)}
                 className="mt-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-2.5 py-0.5 text-[9px] font-extrabold tracking-wide text-amber-300 active:scale-95 transition"
               >
-                Credit Points: {creditInfo.total} · Guide
+                Credit Points: {creditInfo.total}/{MAX_CREDIT} · Guide
               </button>
+              {/* Aaj ka change (Task 52): up = green arrow, down = red arrow */}
+              {todayDelta !== null && todayDelta !== 0 && (
+                <div
+                  className={`mt-1 flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-extrabold tracking-wide ${
+                    todayDelta > 0
+                      ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-300'
+                      : 'border-rose-300/25 bg-rose-400/10 text-rose-300'
+                  }`}
+                >
+                  {todayDelta > 0 ? (
+                    <svg viewBox="0 0 24 24" className="h-2.5 w-2.5" fill="currentColor"><path d="M12 4l8 12H4z" /></svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="h-2.5 w-2.5" fill="currentColor"><path d="M12 20L4 8h16z" /></svg>
+                  )}
+                  {todayDelta > 0 ? '+' : ''}{todayDelta} today
+                </div>
+              )}
             </div>
           )}
         </div>
