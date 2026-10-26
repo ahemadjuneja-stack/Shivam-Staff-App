@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { auth, db } from './firebase';
+import { PROFILE_KEY, readStoredCredentials, syncCredentialsFromDoc, clearSession } from './lib/session';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
@@ -16,7 +17,7 @@ export default function App() {
   const [introDone, setIntroDone] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(() => {
     try {
-      const saved = localStorage.getItem('shivam_staff_logged_user');
+      const saved = localStorage.getItem(PROFILE_KEY);
       return saved ? JSON.parse(saved) : null;
     } catch {
       return null;
@@ -24,12 +25,14 @@ export default function App() {
   });
   // BOOT FAST (Boss order 2026-10-25: "smoothly chalna chahiye"):
   // cached profile localStorage me hai to spinner SKIP — Home turant render,
-  // onAuthStateChanged background me revalidate karega (logout/inactive ho
-  // to profile turant clear -> Auth screen). Firestore listeners bhi
+  // onAuthStateChanged background me revalidate karega. NEVER-LOGOUT (Boss rule
+  // 2026-10-26: "ek baar login -> kabhi logout nahi"): session restore fail ho
+  // to cached profile RAKH kar silent re-login hota hai — login screen sirf
+  // explicit logout / admin-delete par aati hai. Firestore listeners bhi
   // persistent cache se turant data denge (firebase.ts dekho).
   const [loading, setLoading] = useState<boolean>(() => {
     try {
-      return !localStorage.getItem('shivam_staff_logged_user');
+      return !localStorage.getItem(PROFILE_KEY);
     } catch {
       return true;
     }
@@ -47,6 +50,7 @@ export default function App() {
           if (userDocSnap.exists()) {
             const data = userDocSnap.data();
             if (data.status === 'active') {
+              syncCredentialsFromDoc(data);
               const p: UserProfile = {
                 uid: firebaseUser.uid,
                 name: data.name || 'Staff',
@@ -57,10 +61,11 @@ export default function App() {
                 createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
               };
               setProfile(p);
-              localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+              localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
             } else {
+              // admin ne deactivate/delete kiya — REAL logout (profile + creds clear)
+              clearSession();
               setProfile(null);
-              localStorage.removeItem('shivam_staff_logged_user');
             }
           } else {
             const email = firebaseUser.email || '';
@@ -71,6 +76,7 @@ export default function App() {
               if (!snap.empty) {
                 const d = snap.docs[0].data();
                 if (d.status === 'active') {
+                  syncCredentialsFromDoc(d);
                   const p: UserProfile = {
                     uid: snap.docs[0].id,
                     name: d.name || 'Staff',
@@ -81,7 +87,7 @@ export default function App() {
                     createdAt: typeof d.createdAt === 'number' ? d.createdAt : (typeof d.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now())
                   };
                   setProfile(p);
-                  localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+                  localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
                 }
               }
             }
@@ -91,8 +97,23 @@ export default function App() {
         }
       } else {
         setWatchUid(null);
-        setProfile(null);
-        localStorage.removeItem('shivam_staff_logged_user');
+        // NEVER-AUTO-LOGOUT (Boss rule 2026-10-26: "ek baar login -> kabhi logout nahi"):
+        // WebView me Firebase session restore kabhi-kabhi FAIL hota hai (IndexedDB
+        // clear/corrupt, dashboard password change se refresh-token revoke). Cached
+        // profile ko GAYAB mat karo — chupke se re-login try karo, isse staff ko
+        // login screen kabhi nahi dikhti. Bina session ke bhi app chalti hai
+        // (Firestore rules open + persistent cache).
+        const cached = localStorage.getItem(PROFILE_KEY);
+        if (!cached) {
+          setProfile(null);
+        } else {
+          const creds = readStoredCredentials();
+          if (creds) {
+            signInWithEmailAndPassword(auth, creds.email, creds.password).catch(() => {
+              /* silent fail — cached profile + Firestore se app chalta rahega */
+            });
+          }
+        }
       }
       setLoading(false);
     });
@@ -100,8 +121,14 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // LIVE PROFILE SYNC (Boss bug 2026-10-26: "role change karne par screen ka
+  // UI aur permissions change nahi hote"): ye watcher logged-in rehte hue
+  // HAMESHA chalta hai — dashboard se role/status/name/PIN kuch bhi change
+  // karo, app ka UI TURANT update ho jata hai (pehle ye sirf pending-approval
+  // tak chalta tha, profile set hote hi band — isliye role change ke liye
+  // logout/relogin karna padta tha).
   useEffect(() => {
-    if (!watchUid || profile) return;
+    if (!watchUid) return;
 
     const userDocRef = doc(db, 'users', watchUid);
     const unsub = onSnapshot(
@@ -109,7 +136,17 @@ export default function App() {
       (snap) => {
         if (!snap.exists()) return;
         const data = snap.data();
-        if (data.status !== 'active') return;
+        if (data.status !== 'active') {
+          // Pending approval (profile abhi null) -> kuch mat karo, approval ka wait
+          // Logged-in staff ko admin ne deactivate/delete kiya -> REAL logout
+          if (localStorage.getItem(PROFILE_KEY)) {
+            auth.signOut().catch(() => {});
+            clearSession();
+            setProfile(null);
+          }
+          return;
+        }
+        syncCredentialsFromDoc(data);
         const p: UserProfile = {
           uid: snap.id,
           name: data.name || 'Staff',
@@ -120,19 +157,20 @@ export default function App() {
           createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
         };
         setProfile(p);
-        localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+        localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
       },
       (err) => {
-        console.error('Approval watch error:', err);
+        console.error('Profile watch error:', err);
       }
     );
 
     return () => unsub();
-  }, [watchUid, profile]);
+  }, [watchUid]);
 
   const handleLogout = () => {
+    // EXPLICIT logout (hidden long-press) — yahi EK logout hai: profile + creds clear
     auth.signOut();
-    localStorage.removeItem('shivam_staff_logged_user');
+    clearSession();
     setProfile(null);
   };
 
@@ -172,7 +210,7 @@ export default function App() {
             <AuthScreen
               onLoginSuccess={(p) => {
                 setProfile(p);
-                localStorage.setItem('shivam_staff_logged_user', JSON.stringify(p));
+                localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
               }}
             />
           ) : (

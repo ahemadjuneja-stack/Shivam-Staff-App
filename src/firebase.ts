@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -14,6 +14,12 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+
+// PERSISTENCE (Boss rule 2026-10-26: "ek baar login -> kabhi logout nahi"):
+// explicit browserLocalPersistence — Firebase session phone ke local storage
+// me save hota hai aur app restart par restore hota hai (default bhi yahi
+// hai par WebView environments me explicit declaration safe hai).
+setPersistence(auth, browserLocalPersistence).catch(() => {});
 
 // CACHE (Boss order 2026-10-25: "app me Cache add karo smoothly chalna chahiye"):
 // pehle memoryLocalCache() tha — cache sirf RAM me, app band = GAYAB,

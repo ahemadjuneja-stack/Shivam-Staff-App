@@ -12,6 +12,7 @@ import {
   createUserWithEmailAndPassword
 } from 'firebase/auth';
 import { db, auth } from '../firebase';
+import { storeCredentials } from '../lib/session';
 import { UserProfile } from '../types';
 import ShivamLogo from '../components/ShivamLogo';
 
@@ -69,6 +70,10 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       const password = getPassword(pin);
 
       await signInWithEmailAndPassword(auth, email, password);
+      // NEVER-LOGOUT (Boss rule 2026-10-26): successful auth = credentials save —
+      // app restart par session restore fail ho to App.tsx in se SILENT re-login
+      // karta hai, login screen dobara kabhi nahi dikhti
+      storeCredentials(email, password);
 
       const q = query(
         collection(db, 'users'),
@@ -146,6 +151,9 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
 
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       const uid = cred.user.uid;
+      // NEVER-LOGOUT: registration ke baad bhi credentials save — admin approval
+      // ke baad app restart par silent re-login ho sake
+      storeCredentials(email, password);
 
       await setDoc(doc(db, 'users', uid), {
         name: name.trim(),
