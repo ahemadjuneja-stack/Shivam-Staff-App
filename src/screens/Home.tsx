@@ -120,6 +120,11 @@ const fmtH = (min: number): string => `${Math.floor(min / 60)}H`;
 
 export default function Home({ profile, onLogout }: HomeProps) {
   const isManager = profile.role === 'manager';
+  // SALES RULES (Boss order 2026-10-26): salesman ko tasks NAHI dikhte, star/
+  // credit points NAHI dikhte (na display, na auto point writes). Baaki access
+  // Boss aage decide karega.
+  const isSales = profile.role === 'sales';
+  const isWorker = profile.role === 'worker';
 
   // ---------- Hidden logout (Boss: design me logout button nahi) ----------
   // Staff name ~1s press & hold -> English confirm -> logout (UI me kuch nahi dikhta)
@@ -244,8 +249,9 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return () => clearInterval(t);
   }, [isOnDuty]);
 
-  // ---------- Listeners: tasks (visibility rule — manager: uske diye | staff: usko mile) ----------
+  // ---------- Listeners: tasks (visibility rule — manager: uske diye | worker: usko mile | sales: KUCH NAHI) ----------
   useEffect(() => {
+    if (isManager || isSales) return; // SALES: tasks unke liye nahi hai (Boss order 2026-10-26)
     const field = isManager ? 'byUid' : 'toUid';
     const q = query(collection(db, 'tasks'), where(field, '==', profile.uid));
     const unsub = onSnapshot(q, (snap) => {
@@ -258,7 +264,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
       setTasks(rows);
     });
     return () => unsub();
-  }, [profile.uid, isManager]);
+  }, [profile.uid, isManager, isSales]);
 
   // ---------- Listeners: manager staff list (assign picker) ----------
   useEffect(() => {
@@ -278,15 +284,17 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // POINTS GUIDE (Boss Task 51): staff apne points ka pura up/down rule dekh sake
   const [showGuide, setShowGuide] = useState(false);
   useEffect(() => {
+    if (!isWorker) return; // SALES/MANAGER: credit system unke liye nahi hai (Boss order 2026-10-26)
     const unsub = onSnapshot(doc(db, 'credit_points', profile.uid), (snap) => {
       setCreditDoc(snap.exists() ? ({ uid: snap.id, ...(snap.data() as Omit<CreditDoc, 'uid'>) }) : null);
     });
     return () => unsub();
-  }, [profile.uid]);
+  }, [profile.uid, isWorker]);
 
   const [allCredits, setAllCredits] = useState<{ uid: string; taskScore: number; hoursScore: number; dailyScore: number }[]>([]);
   const [staffRoleMap, setStaffRoleMap] = useState<Record<string, string>>({});
   useEffect(() => {
+    if (!isWorker) return; // SALES/MANAGER: rank/credits sirf workers ke liye
     const unsub = onSnapshot(collection(db, 'credit_points'), (snap) => {
       setAllCredits(snap.docs.map((d) => ({ uid: d.id, taskScore: Number(d.data().taskScore) || 0, hoursScore: Number(d.data().hoursScore) || 0, dailyScore: Number(d.data().dailyScore) || 0 })));
     });
@@ -298,7 +306,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
       })
       .catch(() => {});
     return () => unsub();
-  }, []);
+  }, [isWorker]);
 
   // Live totals + POINTS-BASED stars (Boss Task 52: har 60 points = 1 star,
   // 300 = 5 stars — app apne aap credit ke hisab se stars adjust karta hai).
@@ -325,7 +333,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // entries ka net delta — up = green arrow, down = red arrow, Home pe live.
   const [todayDelta, setTodayDelta] = useState<number | null>(null);
   useEffect(() => {
-    if (!profile.uid || profile.role === 'manager') return;
+    if (!profile.uid || !isWorker) return; // SALES/MANAGER: aaj ka change nahi dikhta
     const unsub = onSnapshot(historyCol(profile.uid), (snap) => {
       const today = localYmd(Date.now());
       let sum = 0;
@@ -425,7 +433,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // ek log se sirf EK baar cut/credit (double impossible). Purane build ke
   // pending logs (bina closedAt) safe hain — sirf manager YES/NO se honge.
   useEffect(() => {
-    if (profile.role === 'manager') return;
+    if (!isWorker) return; // SALES: outside auto point cuts bhi nahi (credit system unke liye nahi) — logs manager-review ke liye record rehte hain
     const q = query(collection(db, 'outside_logs'), where('uid', '==', profile.uid));
     const unsub = onSnapshot(q, (snap) => {
       snap.docChanges().forEach((ch) => {
@@ -757,7 +765,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
               {profile.name}
             </span>
           </div>
-          {!isManager && (
+          {isWorker && (
             <div className="flex shrink-0 flex-col items-center">
               <div className="relative flex h-14 w-14 items-center justify-center">
                 <div className="star-glow absolute inset-0 rounded-full bg-amber-400/25 blur-md" />
@@ -846,8 +854,8 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       )}
 
-      {/* PENDING TASK heading (+ New Task for manager) */}
-      <div className="relative z-10 mt-6 mb-2.5 flex items-center justify-between">
+      {/* PENDING TASK heading (+ New Task for manager) — SALES: tasks unke liye nahi (Boss order 2026-10-26) */}
+      {!isSales && (<div className="relative z-10 mt-6 mb-2.5 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h2 className="text-[17px] font-semibold text-[#B7C5F0]">Pending Task</h2>
           <span className="rounded-full border border-sky-300/20 bg-sky-400/10 px-2 py-0.5 text-[10px] font-extrabold text-sky-300">
@@ -867,6 +875,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
           </button>
         )}
       </div>
+      )}
 
       {/* Assign form (manager only) */}
       {isManager && showForm && (
@@ -942,7 +951,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
       )}
 
       {/* Pending task cards — premium glass, status accent */}
-      {pendingTasks.length === 0 ? (
+      {!isSales && (pendingTasks.length === 0 ? (
         <div className="relative z-10 rounded-2xl border border-dashed border-white/10 bg-white/[0.025] px-4 py-6 text-center">
           <div className="text-[13.5px] font-medium text-slate-400">
             {isManager ? 'No pending tasks. Tap "+ New Task" to assign one.' : 'No pending tasks. Enjoy your day!'}
@@ -978,10 +987,10 @@ export default function Home({ profile, onLogout }: HomeProps) {
             );
           })}
         </div>
-      )}
+      ))}
 
       {/* Completed / history — Done cards ya "Nil" */}
-      <div className="relative z-10 mt-6">
+      {!isSales && (<div className="relative z-10 mt-6">
         <h2 className="mb-2.5 text-[17px] font-semibold text-[#B7C5F0]">Completed Task</h2>
         {doneTasks.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-4">
@@ -1013,6 +1022,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
           </div>
         )}
       </div>
+      )}
 
       {/* FIXED branch avatars (Boss: abhi fixed — premium gradient rings) */}
       <div className="relative z-10 mt-6 flex items-start gap-5 overflow-x-auto border-t border-white/[0.08] pb-1 pt-5">

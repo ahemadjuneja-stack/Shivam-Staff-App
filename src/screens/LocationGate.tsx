@@ -8,21 +8,25 @@ import { getShopCenter, distanceToShopM, noteGpsFix } from '../lib/geofence';
 //  access mile aur shop ke 100 mitter area me ho tabhi app open honi chahiye,
 //  agar location on kare aur shop se door hai to app open hona hi nahi chahiye"
 //
-//  GATE SIRF STAFF (role 'worker') PE — Boss: "ye sirf staff mambers ke liye
-//  rules hai, salesman ke liye alag rule banege" — sales + manager KAHIN SE
-//  BHI open kar sakte hain (location tracking Home.tsx reportDeviceAndLocation
-//  se chalti hi hai).
+//  SALES RULE (Boss order 2026-10-26): "salesmen kahi se bhi application khol
+//  sakte hai magar unko location har haal me dena hi hoga — bina location
+//  application open hi nahi ho sakta"
 //
-//  STAFF (worker):
+//  WORKER (staff):
 //    1. App open -> TURANT navigator.geolocation permission prompt (sab se pehle)
 //    2. Permission + GPS fix -> distance vs BOSS-LOCKED shop center (lib/geofence)
 //    3. Inside radius (default 100m) -> app open + AUTO-DUTY-ON request
 //       (localStorage flag — Home.tsx utha ke duty ON karta hai)
-//    4. Outside radius -> LOCKED screen ENGLISH me (Boss: "screen showing honi
-//       chahiye English me ke aap abhi shop par nahi hai is liye aap application
-//       sirf shop me open kar sakte hai") — auto-retry har 20s:
+//    4. Outside radius -> LOCKED screen ENGLISH me — auto-retry har 20s:
 //       shop wapas aate hi app KHUD khul jayegi
 //    5. Permission denied / GPS off -> instructions + Retry button
+//
+//  SALES: shop radius check NAHI (kahin se bhi) — par location permission +
+//  GPS fix ZARURI (fix ke bina app open NAHI). Live monitoring bhi sales pe
+//  chalti hai — app chalte-chalte location band = 'Location Turned Off' lock
+//  (location wapas ON = app khud recover).
+//
+//  MANAGER: bypass — kahin se bhi open.
 // GPS ko net nahi chahiye — permission + GPS only.
 // ============================================================
 
@@ -61,9 +65,15 @@ interface LocationGateProps {
 }
 
 export default function LocationGate({ profile, children }: LocationGateProps) {
-  // GATE sirf staff ('worker') pe — sales ke alag rule banenge (Boss), manager
-  // kahin se bhi open karta hai. Dono bypass.
-  const gated = profile.role === 'worker';
+  // GATE (Boss order 2026-10-26): worker = location + shop radius; sales =
+  // location ONLY (kahin bhi — par location ke bina app open NAHI); manager bypass.
+  const isWorker = profile.role === 'worker';
+  const isSales = profile.role === 'sales';
+  const gated = isWorker || isSales;
+  // LIVE ROLE CHANGE (Task 56): role live badal sakta hai — closures (watch/
+  // runCheck) fresh value ref se padhte hain, render-time value nahi.
+  const radiusCheckRef = useRef(isWorker);
+  radiusCheckRef.current = isWorker;
   const [state, setState] = useState<GateState>(gated ? { kind: 'checking' } : { kind: 'pass' });
   const [radius, setRadius] = useState<number>(100);
   const retryTimer = useRef<number | null>(null);
@@ -101,10 +111,15 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
           window.clearTimeout(gpsOffTimerRef.current);
           gpsOffTimerRef.current = null;
         }
+        noteGpsFix(pos.coords.latitude, pos.coords.longitude, Date.now());
+        // SALES: radius check nahi — koi bhi fix = pass (kahin bhi ho sakta hai)
+        if (!radiusCheckRef.current) {
+          setState((prev) => (prev.kind === 'pass' ? prev : { kind: 'pass' }));
+          return;
+        }
         const d = distanceToShopM(pos.coords.latitude, pos.coords.longitude, center);
         if (d <= center.radius) {
           setState((prev) => (prev.kind === 'pass' ? prev : { kind: 'pass' }));
-          noteGpsFix(pos.coords.latitude, pos.coords.longitude, Date.now());
         } else {
           setState({ kind: 'far', distM: Math.round(d) });
         }
@@ -237,6 +252,13 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     }
     noteGpsFix(loc.lat, loc.lng, loc.at); // is fix ko punches ke coords me bhi use karo
     lastFixAtRef.current = Date.now();
+    // SALES GATE (Boss order 2026-10-26): salesman KAHIN SE BHI app khol sakta
+    // hai — shop radius check NAHI — par location access + GPS fix ZARURI.
+    if (!radiusCheckRef.current) {
+      setState({ kind: 'pass' });
+      startLiveWatch(center); // live monitoring sales pe bhi — location band = lock
+      return;
+    }
     const distM = distanceToShopM(loc.lat, loc.lng, center);
     if (distM <= center.radius) {
       setState({ kind: 'pass' });
@@ -250,10 +272,10 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   runCheckRef.current = runCheck;
 
   useEffect(() => {
-    if (!gated) return; // sales/manager — koi gate nahi, kahin se bhi open
+    if (!gated) return; // manager — koi gate nahi, kahin se bhi open
     runCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gated]);
+  }, [gated, isWorker]); // isWorker: live role change (worker<->sales) par fresh check
 
   if (!gated || state.kind === 'pass') {
     return <>{children({ lat: 0, lng: 0 })}</>;
@@ -273,8 +295,9 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
             </div>
             <h2 className="text-[17px] font-bold text-white">Checking Location</h2>
             <p className="mt-2 text-[12.5px] leading-relaxed text-slate-400">
-              Please allow location access — this app opens only inside the {radius}m shop area.
-              GPS does not need internet.
+              {isWorker
+                ? `Please allow location access — this app opens only inside the ${radius}m shop area. GPS does not need internet.`
+                : 'Please allow location access — this app needs your location to open. GPS does not need internet.'}
             </p>
           </>
         )}
@@ -334,7 +357,9 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
             </div>
             <h2 className="text-[17px] font-bold text-white">Location Turned Off</h2>
             <p className="mt-2 text-[13.5px] leading-relaxed font-semibold text-slate-200">
-              Turning off location can lower your credit points.
+              {isWorker
+                ? 'Turning off location can lower your credit points.'
+                : 'Location is required to keep this app open.'}
             </p>
             <p className="mt-2.5 text-[12.5px] leading-relaxed text-slate-400">
               Your device location is switched off while the app is running. Please turn
