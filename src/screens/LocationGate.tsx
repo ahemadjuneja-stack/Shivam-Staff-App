@@ -79,6 +79,13 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   const retryTimer = useRef<number | null>(null);
   const mounted = useRef(true);
   const runCheckRef = useRef<() => void>(() => {});
+  // PROBE LAYER (Boss bug 2026-10-26: "location band karne par bhi app continue
+  // rehti hai"): current state/center refs — interval closures fresh padhte hain
+  const stateKindRef = useRef<GateState['kind']>(state.kind);
+  stateKindRef.current = state.kind;
+  const centerRef = useRef<{ lat: number; lng: number; radius: number } | null>(null);
+  const probeInFlightRef = useRef(false);
+  const probeErrStreakRef = useRef(0);
 
   // LIVE MONITORING (Boss order 2026-10-26): app open hone ke BAAD bhi location
   // monitor rahe — pehle sirf start par check hota tha, isliye staff location
@@ -98,6 +105,91 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     }
   };
 
+  // ---------- DETECTION LAYER 3 (Boss bug 2026-10-26: "location band karne par
+  // app band nahi hoti, continue rehti hai"): INDEPENDENT FRESH-FIX PROBE —
+  // har 20s ek getCurrentPosition maximumAge:0 (cached fix KABHI nahi, sirf
+  // FRESH fix). Location service band hote hi ye reliably error deta hai
+  // (watchPosition ki tarah silent stall NAHI karta) — 2 lagatar fail = LOCK.
+  // Wapas location ON = fresh fix milte hi app KHUD recover (gps/gps-off-live
+  // dono se). Ye layer KISI aur layer par depend nahi karti.
+  const runProbe = async () => {
+    if (!mounted.current || probeInFlightRef.current) return;
+    if (!('geolocation' in navigator)) return;
+    const kind = stateKindRef.current;
+    if (kind === 'denied' || kind === 'far' || kind === 'checking') return;
+    probeInFlightRef.current = true;
+    try {
+      const pos: any = await new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          (e) => resolve({ __err: e }),
+          { timeout: 15000, enableHighAccuracy: true, maximumAge: 0 }
+        );
+      });
+      if (!mounted.current) return;
+      probeInFlightRef.current = false;
+      if (pos && pos.__err) {
+        const code = Number(pos.__err.code);
+        if (code === 1) {
+          // PERMISSION_DENIED — permission mid-session revoke hui
+          probeErrStreakRef.current = 0;
+          lastFixAtRef.current = 0;
+          setState((prev) => (prev.kind === 'denied' ? prev : { kind: 'denied' }));
+          return;
+        }
+        if (code === 2) {
+          // POSITION_UNAVAILABLE = location service BAND — reliable signal,
+          // 2 lagatar (40s me) = LOCK. Timeout (code 3) = sirf weak GPS signal
+          // (indoor) — wo lock NAHI karta, usse watchdog (30s no-fresh-fix) sambhalta hai.
+          probeErrStreakRef.current += 1;
+          if (probeErrStreakRef.current >= 2) {
+            lastFixAtRef.current = 0;
+            setState((prev) => (prev.kind === 'gps-off-live' ? prev : { kind: 'gps-off-live' }));
+          }
+          return;
+        }
+        // code 3 (TIMEOUT) — weak GPS signal, location chal rahi ho sakti hai
+        probeErrStreakRef.current = 0;
+        return;
+      }
+      // FRESH fix mila — location CHAL rahi hai
+      probeErrStreakRef.current = 0;
+      if (pos && pos.coords) {
+        const fixAge = Date.now() - (typeof pos.timestamp === 'number' ? pos.timestamp : Date.now());
+        if (fixAge < 60000) lastFixAtRef.current = Date.now();
+        noteGpsFix(pos.coords.latitude, pos.coords.longitude, Date.now());
+        const k = stateKindRef.current;
+        const center = centerRef.current;
+        if (k === 'gps-off-live' || k === 'gps') {
+          // RECOVER: location wapas ON — watch fresh start + full gate re-run
+          stopWatch();
+          runCheckRef.current();
+          return;
+        }
+        if (center && radiusCheckRef.current) {
+          // worker radius live re-eval (watch stall ho to bhi radius enforce rahe)
+          const d = distanceToShopM(pos.coords.latitude, pos.coords.longitude, center);
+          if (k === 'pass' && d > center.radius) {
+            setState({ kind: 'far', distM: Math.round(d) });
+          } else if (k === 'far' && d <= center.radius) {
+            setState({ kind: 'pass' });
+          }
+        }
+      }
+    } catch {
+      probeInFlightRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!gated) return;
+    const iv = window.setInterval(() => {
+      if (!mounted.current) return;
+      runProbe();
+    }, 20000);
+    return () => window.clearInterval(iv);
+  }, [gated]);
+
   // Live GPS watch — fix mile to inside/outside decide, error pe (30s no-fix
   // guard se false-positive avoid) GPS-OFF warning popup. Location wapas on
   // hote hi watch khud recover karke popup hata dega.
@@ -106,6 +198,13 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         if (!mounted.current) return;
+        // FIX FRESHNESS (probe layer ke saath): Android WebView kabhi-kabhi
+        // location band hone ke baad bhi PURANA fix repeat karta rehta hai —
+        // sirf callback arrival par lastFixAt update karna watchdog ko hamesha
+        // reset kar deta tha (isliye app lock nahi hoti thi). Ab sirf FRESH
+        // fix (60s ke andar ka) count hota hai — stale fix ignore.
+        const fixAge = Date.now() - (typeof pos.timestamp === 'number' ? pos.timestamp : Date.now());
+        if (fixAge >= 60000) return; // stale fix — watchdog ise nahi ginega
         lastFixAtRef.current = Date.now();
         if (gpsOffTimerRef.current) {
           window.clearTimeout(gpsOffTimerRef.current);
@@ -214,12 +313,16 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
 
   // ---------- BACKGROUND GRACE: app background me WebView timers + GPS updates
   // pause ho jate hain — wapas foreground aane par 30s ki fresh grace do (false
-  // popup avoid), phir watchdog normal chal jayega.
+  // popup avoid), phir watchdog normal chal jayega. SAATH HI turant fresh-fix
+  // PROBE bhi — location band karke wapas aaye to 20s wait nahi, jaldi pakda jata hai.
   useEffect(() => {
     if (!gated) return;
     const onVis = () => {
       if (document.visibilityState === 'visible' && mounted.current) {
         lastFixAtRef.current = Date.now();
+        window.setTimeout(() => {
+          if (mounted.current) runProbe();
+        }, 1500);
       }
     };
     document.addEventListener('visibilitychange', onVis);
@@ -231,6 +334,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     setState({ kind: 'checking' });
     const center = await getShopCenter();
     if (!mounted.current) return;
+    centerRef.current = center;
     setRadius(center.radius);
     const loc = await fetchLocation();
     if (!mounted.current) return;

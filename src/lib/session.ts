@@ -114,7 +114,23 @@ export const syncCredentialsFromDoc = (data: any): void => {
 // App ke pehle render se PEHLE ek hi baar call hota hai (App.tsx boot effect).
 // Sirf MISSING keys restore hote hain — healthy localStorage kabhi overwrite
 // nahi hota (fresh data hamesha jeete).
-export const ensureSessionRestored = async (): Promise<void> => {
+//
+// BACKFILL (v61 — Boss report: "60 update karne par bhi logout"): v60 ka GAP
+// tha — naya version install hone par vault EMPTY hota hai, aur wo sirf tab
+// bharta hai jab koi auth event/login ho. Agar us se PEHLE WebView storage
+// wipe ho gaya (purana 58-era session localStorage me tha, vault khali) to
+// sab gayab -> login screen. Ab boot par ULTA copy bhi hoti hai: localStorage
+// me session hai par vault me nahi -> TURANT vault me backfill (migration).
+export interface SessionBootSnapshot {
+  hadLocalProfile: boolean;
+  hadLocalCreds: boolean;
+  hadVaultProfile: boolean;
+  hadVaultCreds: boolean;
+  restoredFromVault: boolean;
+  backfilledToVault: boolean;
+}
+
+export const ensureSessionRestored = async (): Promise<SessionBootSnapshot> => {
   let lp: string | null = null;
   let lc: string | null = null;
   try {
@@ -127,7 +143,6 @@ export const ensureSessionRestored = async (): Promise<void> => {
   } catch {
     /* ignore */
   }
-  if (lp && lc) return; // dono healthy — kuch nahi karna
 
   let np: string | undefined;
   let nc: string | undefined;
@@ -144,12 +159,42 @@ export const ensureSessionRestored = async (): Promise<void> => {
     /* web dev */
   }
 
+  let restoredFromVault = false;
   try {
-    if (!lp && np) localStorage.setItem(PROFILE_KEY, np);
-    if (!lc && nc) localStorage.setItem(CRED_KEY, nc);
+    if (!lp && np) {
+      localStorage.setItem(PROFILE_KEY, np);
+      restoredFromVault = true;
+    }
+    if (!lc && nc) {
+      localStorage.setItem(CRED_KEY, nc);
+      restoredFromVault = true;
+    }
   } catch {
     /* localStorage hi band hai — next boot phir try hoga */
   }
+
+  let backfilledToVault = false;
+  try {
+    if (!np && lp) {
+      SessionVault.set({ key: PROFILE_KEY, value: lp }).catch(() => {});
+      backfilledToVault = true;
+    }
+    if (!nc && lc) {
+      SessionVault.set({ key: CRED_KEY, value: lc }).catch(() => {});
+      backfilledToVault = true;
+    }
+  } catch {
+    /* web dev */
+  }
+
+  return {
+    hadLocalProfile: !!lp,
+    hadLocalCreds: !!lc,
+    hadVaultProfile: !!np,
+    hadVaultCreds: !!nc,
+    restoredFromVault,
+    backfilledToVault
+  };
 };
 
 // Explicit logout / admin-deactivation — profile + credentials DONO layers

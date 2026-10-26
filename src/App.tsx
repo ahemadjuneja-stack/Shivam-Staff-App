@@ -5,6 +5,7 @@ import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { auth, db } from './firebase';
 import { PROFILE_KEY, readStoredCredentials, syncCredentialsFromDoc, clearSession, storeProfile, ensureSessionRestored } from './lib/session';
+import { diagInitVersion, diagSetIdentity, diagLog } from './lib/diag';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
@@ -25,14 +26,22 @@ const isExplicitInactive = (s: unknown): boolean =>
 const SILENT_RELOGIN_DELAYS = [4000, 12000, 30000];
 const trySilentReLogin = (attempt: number) => {
   const creds = readStoredCredentials();
-  if (!creds) return;
-  signInWithEmailAndPassword(auth, creds.email, creds.password).catch((err: any) => {
-    const code = String(err?.code || '');
-    const networkFail = code.includes('network') || code.includes('timeout');
-    if (networkFail && attempt <= SILENT_RELOGIN_DELAYS.length) {
-      window.setTimeout(() => trySilentReLogin(attempt + 1), SILENT_RELOGIN_DELAYS[attempt - 1]);
-    }
-  });
+  if (!creds) {
+    diagLog('silent_skip', { reason: 'no-creds' });
+    return;
+  }
+  signInWithEmailAndPassword(auth, creds.email, creds.password)
+    .then(() => {
+      diagLog('silent_ok', { attempt });
+    })
+    .catch((err: any) => {
+      const code = String(err?.code || 'unknown');
+      diagLog('silent_fail', { code, attempt });
+      const networkFail = code.includes('network') || code.includes('timeout');
+      if (networkFail && attempt <= SILENT_RELOGIN_DELAYS.length) {
+        window.setTimeout(() => trySilentReLogin(attempt + 1), SILENT_RELOGIN_DELAYS[attempt - 1]);
+      }
+    });
 };
 
 export default function App() {
@@ -69,7 +78,29 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
-    ensureSessionRestored().finally(() => {
+    diagInitVersion().finally(() => {});
+    // diag identity: stored creds ka phone (login se pehle bhi log doc me jaye)
+    try {
+      const c = readStoredCredentials();
+      if (c?.email) diagSetIdentity(c.email.split('@')[0]);
+    } catch {
+      /* ignore */
+    }
+    ensureSessionRestored()
+      .then((snap) => {
+        diagLog('boot', {
+          lp: snap.hadLocalProfile,
+          lc: snap.hadLocalCreds,
+          vp: snap.hadVaultProfile,
+          vc: snap.hadVaultCreds,
+          restored: snap.restoredFromVault,
+          backfill: snap.backfilledToVault
+        });
+      })
+      .catch(() => {
+        diagLog('boot_err');
+      })
+      .finally(() => {
       if (!alive) return;
       try {
         const saved = localStorage.getItem(PROFILE_KEY);
@@ -84,7 +115,7 @@ export default function App() {
         /* corrupt cache — auth flow decide karega */
       }
       setBooted(true);
-    });
+      });
     return () => {
       alive = false;
     };
@@ -116,8 +147,11 @@ export default function App() {
               };
               setProfile(p);
               storeProfile(p);
+              diagSetIdentity(p.mobile);
+              diagLog('doc_ok', { status: String(data.status || 'missing'), role: String(data.role || 'missing') });
             } else {
               // admin ne deactivate/delete kiya — REAL logout (profile + creds clear)
+              diagLog('deactivate_logout', { status: String(data.status) });
               clearSession();
               setProfile(null);
             }
@@ -129,7 +163,7 @@ export default function App() {
               const snap = await getDocs(q);
               if (!snap.empty) {
                 const d = snap.docs[0].data();
-                if (d.status === 'active') {
+                if (!isExplicitInactive(d.status)) {
                   syncCredentialsFromDoc(d);
                   const p: UserProfile = {
                     uid: snap.docs[0].id,
@@ -142,12 +176,21 @@ export default function App() {
                   };
                   setProfile(p);
                   storeProfile(p);
+                  diagSetIdentity(p.mobile);
+                  diagLog('doc_phone_fallback', { status: String(d.status || 'missing'), role: String(d.role || 'missing') });
+                } else {
+                  diagLog('deactivate_logout', { status: String(d.status), via: 'phone-fallback' });
+                  clearSession();
+                  setProfile(null);
                 }
+              } else {
+                diagLog('doc_missing', { authUid: firebaseUser.uid.slice(0, 6) });
               }
             }
           }
         } catch (e) {
           console.error('Auth state sync error:', e);
+          diagLog('doc_err', { msg: String(e).slice(0, 140) });
         }
       } else {
         setWatchUid(null);
@@ -158,6 +201,7 @@ export default function App() {
         // login screen kabhi nahi dikhti. Bina session ke bhi app chalti hai
         // (Firestore rules open + persistent cache).
         const cached = localStorage.getItem(PROFILE_KEY);
+        diagLog('auth_null', { hadCached: !!cached });
         if (!cached) {
           setProfile(null);
         } else {
@@ -225,6 +269,7 @@ export default function App() {
 
   const handleLogout = () => {
     // EXPLICIT logout (hidden long-press) — yahi EK logout hai: profile + creds clear
+    diagLog('logout_explicit');
     auth.signOut();
     clearSession();
     setProfile(null);
@@ -265,6 +310,8 @@ export default function App() {
           ) : !profile ? (
             <AuthScreen
               onLoginSuccess={(p) => {
+                diagSetIdentity(p.mobile);
+                diagLog('login_ok', { role: p.role });
                 setProfile(p);
                 storeProfile(p);
               }}
