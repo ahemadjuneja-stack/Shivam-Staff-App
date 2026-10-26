@@ -33,6 +33,29 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- BACKGROUND LOCATION TRACKING (Boss order 2026-10-27: "salesman agar
+             app on naa bhi kare aur location on kare tab bhi unka location
+             dashboard par aana chahiye"): native foreground service — app
+             band/killed hone par bhi GPS trail + ON/OFF events + duty sync
+             Firestore me jaata rehta hai (persistent notification ke saath). -->
+        <service
+            android:name=".LocationTrackService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".WatchdogReceiver"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->
@@ -46,4 +69,17 @@
          inke hone par runtime dialog khud dikhata hai. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- BACKGROUND TRACKING (Boss order 2026-10-27): foreground service app
+         band hone par bhi location le (ACCESS_BACKGROUND_LOCATION = "Allow all
+         the time" — watchdog/boot restart me chahiye; FGS while-in-use se bhi
+         chalti hai). FOREGROUND_SERVICE_LOCATION = API 34+ requirement,
+         POST_NOTIFICATIONS = API 33+ FGS notification, RECEIVE_BOOT_COMPLETED
+         = reboot ke baad tracking resume, WAKE_LOCK = alarm/CPU. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

@@ -4,7 +4,6 @@ import { fetchLocation } from '../lib/reporting';
 import { getShopCenter, distanceToShopM, noteGpsFix } from '../lib/geofence';
 import { LocationGuard } from '../lib/locationGuard';
 import { diagLog } from '../lib/diag';
-import { openLocationSession, closeLocationSession, appendTrackPoint } from '../lib/locTrack';
 
 // ============================================================
 // LOCATION GATE (Boss order 2026-10-26 + English screen 2026-10-26):
@@ -116,7 +115,6 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   const radiusRef = useRef<number>(100);
   radiusRef.current = radius;
   const retryTimer = useRef<number | null>(null);
-  const trackTimerRef = useRef<number | null>(null); // sales road-map sampler
   const mounted = useRef(true);
   const runCheckRef = useRef<() => void>(() => {});
   // SESSION OPEN location — gate pass wala fresh fix (runCheck ne noteGpsFix
@@ -432,50 +430,29 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [gated]);
 
-  // ---------- SALES LOCATION DUTY TRACKING (Boss order 2026-10-26: "salesmen
-  // ka duty location par hi chale — button nahi; kaha ON kiya, kaha OFF,
-  // poora road map dashboard me"): gate state machine par sessions chalti hai —
-  //   pass        -> loc_session OPEN + auto-duty-ON request (Home punch karta hai)
-  //                  + road-map sampler (har 3 min FRESH fix -> points[])
-  //   off/denied  -> loc_session CLOSE (last point = OFF location) + auto-duty-OFF
-  //                  request + loc_event 'off'
-  // SALES ONLY (worker ka apna geofence system hai, manager bypass).
+  // ---------- SALES LOCATION DUTY TRACKING (Boss order 2026-10-27: "salesman
+  // agar app on naa bhi kare aur location on kare tab bhi location dashboard
+  // par aana chahiye"): ROAD-MAP + SESSIONS + EVENTS ab NATIVE LocationTrack-
+  // Service karta hai (foreground service — app band/killed hone par bhi).
+  // JS ka kaam sirf: gate pass par native ko fresh fix dena (ensureSession —
+  // session start coords + 'on' event location isi se) + auto-duty flags
+  // (foreground punches integrity path se hote hain — double punch nahi).
   useEffect(() => {
     if (!gated || !isSales) return;
     const kind = state.kind;
     if (kind === 'pass') {
-      // SESSION OPEN/RESUME — lastGpsFix (fresh gate fix) = ON location
-      openLocationSession(profile.uid, profile.name, (() => {
-        const f = lastGpsFixRef.current;
-        return f ? { lat: f.lat, lng: f.lng } : null;
-      })()).catch(() => {});
       requestAutoDutyOn(); // location ON = duty ON (button nahi — auto)
-      // ROAD-MAP SAMPLER — har 3 min FRESH fix -> session points[]
-      if (trackTimerRef.current === null) {
-        appendTrackPoint(profile.uid).catch(() => {}); // pehla point jaldi
-        trackTimerRef.current = window.setInterval(() => {
-          if (!mounted.current) return;
-          appendTrackPoint(profile.uid).catch(() => {});
-        }, 3 * 60 * 1000);
+      const f = lastGpsFixRef.current;
+      if (Capacitor.isNativePlatform()) {
+        LocationGuard.ensureSession({ hasFix: !!f, lat: f?.lat ?? 0, lng: f?.lng ?? 0 }).catch(() => {});
       }
     } else if (kind === 'gps-off-live' || kind === 'denied') {
-      // SESSION CLOSE — location OFF / permission revoke = duty khatam
-      closeLocationSession(profile.uid, profile.name, kind === 'denied' ? 'permission' : 'loc_off').catch(() => {});
+      // SESSION CLOSE native service PROVIDERS_CHANGED receiver khud karta hai
+      // (location truly OFF hote hi — GPS stall alag cheez hai, off event nahi)
       requestAutoDutyOff(); // location OFF = duty OFF (Home auto 'out' punch)
-      if (trackTimerRef.current !== null) {
-        window.clearInterval(trackTimerRef.current);
-        trackTimerRef.current = null;
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gated, isSales, state.kind]);
-
-  // sampler cleanup
-  useEffect(() => {
-    return () => {
-      if (trackTimerRef.current !== null) window.clearInterval(trackTimerRef.current);
-    };
-  }, []);
 
   const runCheck = async () => {
     if (!mounted.current) return;

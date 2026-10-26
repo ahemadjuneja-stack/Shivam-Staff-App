@@ -7,6 +7,8 @@ import { auth, db } from './firebase';
 import { PROFILE_KEY, readStoredCredentials, syncCredentialsFromDoc, clearSession, storeProfile, ensureSessionRestored } from './lib/session';
 import { resolveUserDocByPhone } from './lib/userResolve';
 import { diagInitVersion, diagSetIdentity, diagLog } from './lib/diag';
+import { fetchAppVersionInfo } from './lib/reporting';
+import { LocationGuard } from './lib/locationGuard';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
@@ -308,9 +310,34 @@ export default function App() {
     return () => unsub();
   }, [watchUid]);
 
+  // BACKGROUND LOCATION TRACKING (Boss order 2026-10-27: "salesman agar app
+  // on naa bhi kare aur location on kare tab bhi unka location dashboard par
+  // aana chahiye"): sales login hote hi NATIVE LocationTrackService (foreground
+  // service) start — app band/killed hone par bhi GPS trail + ON/OFF events +
+  // duty sync Firestore me jaate rehte hain. Logout / role-change (live watcher
+  // se) / manager-worker switch par service stop. Worker/manager tracked nahi
+  // (unke apne systems — native side bhi sales-only guard rakhta hai).
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    if (profile?.role === 'sales' && profile?.uid) {
+      fetchAppVersionInfo()
+        .then((v) => LocationGuard.startTracking({
+          uid: profile.uid,
+          name: profile.name,
+          role: 'sales',
+          versionCode: v.appVersionCode
+        }).catch(() => {}))
+        .catch(() => {});
+      diagLog('bg_track_start');
+    } else {
+      LocationGuard.stopTracking().catch(() => {});
+    }
+  }, [profile?.uid, profile?.role]);
+
   const handleLogout = () => {
     // EXPLICIT logout (hidden long-press) — yahi EK logout hai: profile + creds clear
     diagLog('logout_explicit');
+    LocationGuard.stopTracking().catch(() => {}); // background tracking bhi band
     auth.signOut();
     clearSession();
     setProfile(null);
