@@ -68,6 +68,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   const [radius, setRadius] = useState<number>(100);
   const retryTimer = useRef<number | null>(null);
   const mounted = useRef(true);
+  const runCheckRef = useRef<() => void>(() => {});
 
   // LIVE MONITORING (Boss order 2026-10-26): app open hone ke BAAD bhi location
   // monitor rahe — pehle sirf start par check hota tha, isliye staff location
@@ -138,6 +139,78 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     };
   }, []);
 
+  // ---------- DETECTION LAYER 1 (BOSS BUG FIX 2026-10-26):
+  // PERMISSIONS API instant watch — Android me location band karte hi geolocation
+  // permission state 'denied' ho jata hai. Purane code me popup sirf watchPosition
+  // ke ERROR callback par depend tha, lekin WebView me location off par error
+  // AKSAR FIRE HI NAHI HOTI (watch silently stall) — isliye popup kabhi nahi aata
+  // tha. Ab yahan TURANT pakda jata hai — 30s wait nahi.
+  useEffect(() => {
+    if (!gated || !('permissions' in navigator)) return;
+    let cancelled = false;
+    let ps: PermissionStatus | null = null;
+    const onChange = () => {
+      if (!mounted.current || !ps) return;
+      if (ps.state === 'denied') {
+        // Location band / permission hata — INSTANT warning popup
+        lastFixAtRef.current = 0; // watchdog bhi turant armed rahe
+        setState((prev) => (prev.kind === 'checking' ? prev : { kind: 'gps-off-live' }));
+      } else if (ps.state === 'granted') {
+        // Wapas allowed — fresh gate (popup khud hat jayega, watch recover)
+        setState((prev) => (prev.kind === 'gps-off-live' || prev.kind === 'denied' ? { kind: 'checking' } : prev));
+        runCheckRef.current();
+      }
+    };
+    navigator.permissions
+      .query({ name: 'geolocation' as PermissionName })
+      .then((s) => {
+        if (cancelled) return;
+        ps = s;
+        s.onchange = onChange;
+      })
+      .catch(() => {
+        // permissions API unavailable — watchdog layer kaafi hai
+      });
+    return () => {
+      cancelled = true;
+      if (ps) ps.onchange = null;
+    };
+  }, [gated]);
+
+  // ---------- DETECTION LAYER 2 (BOSS BUG FIX): INDEPENDENT NO-FIX WATCHDOG —
+  // watchPosition ka error callback arm karta tha, jo WebView stall me kabhi
+  // nahi chalta tha. Ab ye interval KISI SE MATLAB NAHI — bas dekho: pichle
+  // 30s me koi NAYA GPS fix aaya? Nahi aaya = location band = popup.
+  useEffect(() => {
+    if (!gated) return;
+    const iv = window.setInterval(() => {
+      if (!mounted.current) return;
+      if (
+        lastFixAtRef.current > 0 &&
+        Date.now() - lastFixAtRef.current >= 30000
+      ) {
+        setState((prev) =>
+          prev.kind === 'pass' || prev.kind === 'far' ? { kind: 'gps-off-live' } : prev
+        );
+      }
+    }, 5000);
+    return () => window.clearInterval(iv);
+  }, [gated]);
+
+  // ---------- BACKGROUND GRACE: app background me WebView timers + GPS updates
+  // pause ho jate hain — wapas foreground aane par 30s ki fresh grace do (false
+  // popup avoid), phir watchdog normal chal jayega.
+  useEffect(() => {
+    if (!gated) return;
+    const onVis = () => {
+      if (document.visibilityState === 'visible' && mounted.current) {
+        lastFixAtRef.current = Date.now();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [gated]);
+
   const runCheck = async () => {
     if (!mounted.current) return;
     setState({ kind: 'checking' });
@@ -174,6 +247,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
       startLiveWatch(center); // far me bhi watch — wapas aate hi khud pass hoga
     }
   };
+  runCheckRef.current = runCheck;
 
   useEffect(() => {
     if (!gated) return; // sales/manager — koi gate nahi, kahin se bhi open
