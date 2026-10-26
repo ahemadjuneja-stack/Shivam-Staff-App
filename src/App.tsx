@@ -32,6 +32,7 @@ const buildProfileFromDoc = (docId: string, d: any): UserProfile => ({
   city: d?.city || 'Main',
   role: (d?.role === 'sales' || d?.role === 'salesman' || d?.role === 'sales_manager') ? 'sales' : (d?.role === 'manager' || d?.role === 'admin') ? 'manager' : 'worker',
   status: 'active',
+  photo: typeof d?.photo === 'string' && d.photo ? d.photo : undefined,
   createdAt: typeof d?.createdAt === 'number' ? d.createdAt : (typeof d?.createdAt === 'string' ? new Date(d.createdAt).getTime() : Date.now())
 });
 
@@ -172,6 +173,7 @@ export default function App() {
                 city: data.city || 'Main',
                 role: (data.role === 'sales' || data.role === 'salesman' || data.role === 'sales_manager') ? 'sales' : (data.role === 'manager' || data.role === 'admin') ? 'manager' : 'worker',
                 status: 'active',
+                photo: typeof data.photo === 'string' && data.photo ? data.photo : undefined,
                 createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
               };
               setProfile(p);
@@ -297,6 +299,7 @@ export default function App() {
           city: data.city || 'Main',
           role: (data.role === 'sales' || data.role === 'salesman' || data.role === 'sales_manager') ? 'sales' : (data.role === 'manager' || data.role === 'admin') ? 'manager' : 'worker',
           status: 'active',
+          photo: typeof data.photo === 'string' && data.photo ? data.photo : undefined,
           createdAt: typeof data.createdAt === 'number' ? data.createdAt : (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : Date.now())
         };
         setProfile(p);

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -14,11 +15,14 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { UserProfile, PunchRecord, Task, CreditDoc, OutsideLog } from '../types';
+import { UserProfile, PunchRecord, Task, CreditDoc, OutsideLog, ScheduleEntry } from '../types';
 import { computeDutyMin, FALLBACK_TARGET_H } from '../lib/duty';
 import { CREDIT_POINTS, MAX_CREDIT, MAX_ACTIVE_TASKS_PER_STAFF, totalOf, clampScore, starsForPoints, dailyCreditDelta, workedMinutesOnDay, hourlyCutFor } from '../lib/credit';
 import { logCreditHistory, txHistoryEntry, historyCol, localYmd } from '../lib/history';
 import PointsGuide from './PointsGuide';
+import ProfileScreen from './Profile';
+import Avatar from '../components/Avatar';
+import { upsertScheduleEntry, removeScheduleEntry } from '../lib/schedule';
 import { reportDeviceAndLocation } from '../lib/reporting';
 import { sampleGeofence, closeStaleOutsideEvent, lastGpsFix, SAMPLE_MS } from '../lib/geofence';
 import { enqueueOutbox, flushOutbox } from '../lib/sync';
@@ -34,7 +38,7 @@ import {
   markAutoCloseDone,
   MAX_SHIFT_MS
 } from '../lib/integrity';
-import { CalendarDays, Timer, UserRound, BarChart3, Wallet, ChevronRight } from 'lucide-react';
+import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2 } from 'lucide-react';
 import { consumeAutoDutyRequest, consumeAutoDutyOffRequest } from './LocationGate';
 import TaskVerifyModal from '../components/TaskVerifyModal';
 import { verifyTask } from '../lib/taskVerify';
@@ -85,6 +89,28 @@ function MetaChip({ icon: Icon, label, value }: { icon: typeof CalendarDays; lab
   );
 }
 
+// DP CHIP (Boss order 2026-10-27: "har jaga jaha unka naam aata hai waha DP
+// bhi show hona chahiye"): task cards me To/By naam ke saath profile photo.
+function PersonChip({
+  photoMap,
+  uid,
+  name,
+  label
+}: {
+  photoMap: Record<string, string>;
+  uid: string;
+  name: string;
+  label: string;
+}) {
+  return (
+    <span className="glass-inset inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10.5px]">
+      <Avatar photo={photoMap[uid]} name={name} size={18} />
+      <span className="font-medium text-slate-500">{label}:</span>
+      <span className="font-bold text-slate-200">{name}</span>
+    </span>
+  );
+}
+
 // Branch avatar ring gradients (premium — fixed branches, Boss: abhi fixed)
 const BRANCH_RINGS = [
   'linear-gradient(135deg, #F5B93F, #E8912D)',
@@ -126,9 +152,13 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const isSales = profile.role === 'sales';
   const isWorker = profile.role === 'worker';
 
-  // ---------- Hidden logout (Boss: design me logout button nahi) ----------
-  // Staff name ~1s press & hold -> English confirm -> logout (UI me kuch nahi dikhta)
+  // ---------- Hidden logout (Boss: design me logout button nahi) + TAP = PROFILE (Boss order 2026-10-27) ----------
+  // Staff name ~0.9s press & hold -> English confirm -> logout (UI me kuch nahi dikhta)
+  // SHORT TAP (<0.7s) -> PROFILE SCREEN khulta hai (photo add/edit ke liye)
+  const [showProfile, setShowProfile] = useState(false);
   const pressTimer = useRef<number | null>(null);
+  const pressStartedAtRef = useRef(0);
+  const longPressFiredRef = useRef(false);
   const cancelPress = () => {
     if (pressTimer.current !== null) {
       window.clearTimeout(pressTimer.current);
@@ -137,9 +167,25 @@ export default function Home({ profile, onLogout }: HomeProps) {
   };
   const startPress = () => {
     cancelPress();
+    longPressFiredRef.current = false;
+    pressStartedAtRef.current = Date.now();
     pressTimer.current = window.setTimeout(() => {
+      longPressFiredRef.current = true;
       if (window.confirm('Logout from Shivam Staff App?')) onLogout();
     }, 900);
+  };
+  // Release par: agar long-press fire NAHI hua aur press chhota tha -> profile
+  // (touchmove/mouseleave par cancelPress hi chalega — scroll me profile nahi khulega)
+  const endPress = () => {
+    cancelPress();
+    if (
+      !longPressFiredRef.current &&
+      pressStartedAtRef.current &&
+      Date.now() - pressStartedAtRef.current < 700
+    ) {
+      setShowProfile(true);
+    }
+    pressStartedAtRef.current = 0;
   };
   useEffect(() => cancelPress, []);
 
@@ -289,6 +335,37 @@ export default function Home({ profile, onLogout }: HomeProps) {
       })
       .catch(() => {});
   }, [isManager]);
+
+  // ---------- DP MAP (Boss order 2026-10-27: task cards me naam ke saath photo) ----------
+  // staffList (manager) + apna photo turant; baki uids (worker ka manager, etc.)
+  // lazy getDoc — ek uid sirf ek baar fetch hota hai.
+  const [photoMap, setPhotoMap] = useState<Record<string, string>>({});
+  const photoFetchedRef = useRef<Set<string>>(new Set());
+  const ensurePhoto = (uid: string) => {
+    if (!uid || photoFetchedRef.current.has(uid)) return;
+    photoFetchedRef.current.add(uid);
+    getDoc(doc(db, 'users', uid))
+      .then((s) => {
+        const p = s.data()?.photo;
+        if (typeof p === 'string' && p) setPhotoMap((m) => (m[uid] === p ? m : { ...m, [uid]: p }));
+      })
+      .catch(() => {});
+  };
+  useEffect(() => {
+    const patch: Record<string, string> = {};
+    if (profile.photo) patch[profile.uid] = profile.photo;
+    staffList.forEach((s) => {
+      const p = (s as any).photo;
+      if (typeof p === 'string' && p) patch[s.uid] = p;
+    });
+    if (Object.keys(patch).length) setPhotoMap((m) => ({ ...m, ...patch }));
+  }, [profile.photo, profile.uid, staffList]);
+  useEffect(() => {
+    tasks.forEach((t) => {
+      ensurePhoto(t.toUid);
+      ensurePhoto(t.byUid);
+    });
+  }, [tasks]);
 
   // ---------- CREDIT POINTS (live) ----------
   const [creditDoc, setCreditDoc] = useState<CreditDoc | null>(null);
@@ -706,6 +783,114 @@ export default function Home({ profile, onLogout }: HomeProps) {
     }
   };
 
+  // ---------- LINE SCHEDULE (Boss order 2026-10-27 — SALES): "apne LINE
+  // SCHEDULE likh sake usme City ka naam aur ek side date likhni hogi" +
+  // "dashboard se monthly SCHEDULE diye jayge home page par apne aap city
+  // names showing hone chahiye" — dashboard XL upload / monthly builder jo
+  // bhi likhta hai wo BHI yahan live dikhta hai (same collection).
+  const [scheduleRows, setScheduleRows] = useState<ScheduleEntry[]>([]);
+  const [showSchedForm, setShowSchedForm] = useState(false);
+  const [schedDate, setSchedDate] = useState(() => localYmd(Date.now()));
+  const [schedCity, setSchedCity] = useState('');
+  const [savingSched, setSavingSched] = useState(false);
+  const [editSchedId, setEditSchedId] = useState<string | null>(null);
+  const [editSchedDate, setEditSchedDate] = useState('');
+  const [editSchedCity, setEditSchedCity] = useState('');
+
+  useEffect(() => {
+    if (!isSales || !profile.uid) return;
+    const q = query(collection(db, 'line_schedule'), where('uid', '==', profile.uid));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ScheduleEntry, 'id'>) }));
+        rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.city.localeCompare(b.city)));
+        setScheduleRows(rows);
+      },
+      () => {}
+    );
+    return () => unsub();
+  }, [isSales, profile.uid]);
+
+  const addScheduleRow = async () => {
+    if (savingSched) return;
+    if (!schedDate) {
+      window.alert('Please pick a date.');
+      return;
+    }
+    if (!schedCity.trim()) {
+      window.alert('Please write the city name.');
+      return;
+    }
+    setSavingSched(true);
+    try {
+      await upsertScheduleEntry({
+        uid: profile.uid,
+        name: profile.name,
+        phone: profile.mobile,
+        date: schedDate,
+        city: schedCity.trim(),
+        source: 'self'
+      });
+      setSchedCity('');
+      setShowSchedForm(false);
+      showToast('Line schedule saved.');
+    } catch (e: any) {
+      window.alert('Could not save schedule: ' + String(e?.message || e));
+    } finally {
+      setSavingSched(false);
+    }
+  };
+
+  // EDIT (Boss: "agar wo usme koi changes karna chahiye to date ya city me kar
+  // sakte hai") — date/city badla to NAYA deterministic doc banta hai, purana
+  // delete (id bhi date+city se banta hai isliye move = delete+create).
+  const saveSchedEdit = async () => {
+    if (!editSchedId || savingSched) return;
+    if (!editSchedDate) {
+      window.alert('Please pick a date.');
+      return;
+    }
+    if (!editSchedCity.trim()) {
+      window.alert('Please write the city name.');
+      return;
+    }
+    const row = scheduleRows.find((r) => r.id === editSchedId);
+    if (!row) {
+      setEditSchedId(null);
+      return;
+    }
+    setSavingSched(true);
+    try {
+      await upsertScheduleEntry({
+        uid: profile.uid,
+        name: profile.name,
+        phone: profile.mobile,
+        date: editSchedDate,
+        city: editSchedCity.trim(),
+        source: row.source === 'dashboard' ? 'dashboard' : 'self'
+      });
+      if (row.id) await removeScheduleEntry(row.id).catch(() => {});
+      setEditSchedId(null);
+      showToast('Schedule updated.');
+    } catch (e: any) {
+      window.alert('Could not update schedule: ' + String(e?.message || e));
+    } finally {
+      setSavingSched(false);
+    }
+  };
+
+  const deleteSchedRow = async (row: ScheduleEntry) => {
+    if (!row.id) return;
+    if (!window.confirm(`Remove ${row.city} on ${row.date} from your line schedule?`)) return;
+    try {
+      await removeScheduleEntry(row.id);
+      showToast('Schedule entry removed.');
+    } catch (e: any) {
+      window.alert('Could not remove: ' + String(e?.message || e));
+    }
+  };
+
   // ---------- Task verify (manager tap -> verify modal) ----------
   // BUG FIX (Boss order 2026-10-26): pehle window.confirm tha — box band karne
   // (Cancel) par bhi 'false' = NO samajh ke turant -5 cut jata tha, sirf
@@ -742,6 +927,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return <PointsGuide onBack={() => setShowGuide(false)} />;
   }
 
+  // PROFILE SCREEN (Boss order 2026-10-27): naam par tap -> profile (photo add/edit)
+  if (showProfile) {
+    return <ProfileScreen profile={profile} onBack={() => setShowProfile(false)} />;
+  }
+
   return (
     <div className="relative min-h-screen text-slate-100 px-4 pb-28">
       {/* Ambient depth — premium feel (fixed glow orbs, layout untouched) */}
@@ -758,23 +948,33 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       )}
 
-      {/* HEADER HERO — brand eyebrow + staff name (gold, long-press = hidden logout) + star badge */}
+      {/* HEADER HERO — brand eyebrow + DP + staff name (TAP = profile, long-press = hidden logout) + star badge */}
       <div className="intro-rise relative z-10">
         <div className="glass-card flex items-center justify-between gap-3 rounded-[26px] px-5 py-4">
-          <div className="min-w-0">
-            <div className="shivam-silver shivam-silver-shine-slow text-[9px] font-bold uppercase tracking-[0.34em]">Shivam Staff</div>
-            <span
-              className="gold-text mt-0.5 block select-none truncate text-[22px] font-bold leading-tight"
-              onTouchStart={startPress}
-              onTouchEnd={cancelPress}
-              onTouchMove={cancelPress}
-              onMouseDown={startPress}
-              onMouseUp={cancelPress}
-              onMouseLeave={cancelPress}
-              onContextMenu={(e) => e.preventDefault()}
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            {/* DP (Boss order 2026-10-27): naam ke saath photo, tap = profile */}
+            <button
+              onClick={() => setShowProfile(true)}
+              className="shrink-0 rounded-full ring-2 ring-amber-300/25 transition active:scale-95"
+              title="Open profile"
             >
-              {profile.name}
-            </span>
+              <Avatar photo={profile.photo} name={profile.name} size={46} />
+            </button>
+            <div className="min-w-0">
+              <div className="shivam-silver shivam-silver-shine-slow text-[9px] font-bold uppercase tracking-[0.34em]">Shivam Staff</div>
+              <span
+                className="gold-text mt-0.5 block select-none truncate text-[22px] font-bold leading-tight"
+                onTouchStart={startPress}
+                onTouchEnd={endPress}
+                onTouchMove={cancelPress}
+                onMouseDown={startPress}
+                onMouseUp={endPress}
+                onMouseLeave={cancelPress}
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                {profile.name}
+              </span>
+            </div>
           </div>
           {isWorker && (
             <div className="flex shrink-0 flex-col items-center">
@@ -827,6 +1027,169 @@ export default function Home({ profile, onLogout }: HomeProps) {
           )}
         </div>
       </div>
+
+      {/* LINE SCHEDULE (Boss order 2026-10-27 — SALES ONLY): jahan normal staff
+          ko tasks dikhte hain wahan salesman apna tour plan likhta/dekhta hai.
+          Dashboard se aaya monthly schedule BHI yahin live show hota hai. */}
+      {isSales && (
+        <div className="relative z-10 mt-6">
+          <div className="mb-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-[17px] font-semibold text-[#B7C5F0]">Line Schedule</h2>
+              <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-extrabold text-emerald-300">
+                {scheduleRows.length}
+              </span>
+            </div>
+            <button
+              onClick={() => setShowSchedForm((v) => !v)}
+              className={`flex items-center rounded-full px-4 py-2 text-[11px] font-extrabold uppercase tracking-wider shadow-lg transition active:scale-95 ${
+                showSchedForm
+                  ? 'border border-white/10 bg-white/10 text-slate-200 shadow-none'
+                  : 'bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 shadow-emerald-500/25'
+              }`}
+            >
+              {showSchedForm ? '× Close' : '+ Add City'}
+            </button>
+          </div>
+
+          {showSchedForm && (
+            <div className="glass-card intro-rise mb-3 space-y-3 rounded-[20px] p-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="sec-label">Date</label>
+                  <input
+                    type="date"
+                    value={schedDate}
+                    onChange={(e) => setSchedDate(e.target.value)}
+                    className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white focus:border-amber-300/50 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="sec-label">City</label>
+                  <input
+                    value={schedCity}
+                    onChange={(e) => setSchedCity(e.target.value)}
+                    placeholder="e.g. Junagadh"
+                    className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:border-amber-300/50 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={addScheduleRow}
+                disabled={savingSched}
+                className="w-full rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 py-3 text-xs font-extrabold text-slate-950 shadow-lg shadow-emerald-500/25 disabled:opacity-50 transition active:scale-95"
+              >
+                {savingSched ? 'Saving...' : 'Save Line Schedule'}
+              </button>
+            </div>
+          )}
+
+          {scheduleRows.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.025] px-4 py-5 text-center">
+              <div className="text-[13px] font-medium text-slate-400">No line schedule yet.</div>
+              <div className="mt-1 text-[10.5px] text-slate-600">
+                Add your city + date — your monthly schedule from the dashboard also appears here automatically.
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {scheduleRows.map((row) => {
+                const isToday = row.date === localYmd(Date.now());
+                const dayNum = Number(row.date.slice(8, 10));
+                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                const monthShort = monthNames[Math.max(0, Math.min(11, Number(row.date.slice(5, 7)) - 1))];
+                const dt = new Date(Number(row.date.slice(0, 4)), Number(row.date.slice(5, 7)) - 1, dayNum);
+                const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getDay()];
+                return (
+                  <div key={row.id} className={`glass-card rounded-[18px] px-4 py-3 ${isToday ? 'ring-1 ring-amber-300/40' : ''}`}>
+                    {editSchedId === row.id ? (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <input
+                            type="date"
+                            value={editSchedDate}
+                            onChange={(e) => setEditSchedDate(e.target.value)}
+                            className="glass-inset w-full rounded-xl p-2.5 text-xs text-white focus:outline-none"
+                          />
+                          <input
+                            value={editSchedCity}
+                            onChange={(e) => setEditSchedCity(e.target.value)}
+                            placeholder="City"
+                            className="glass-inset w-full rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={saveSchedEdit}
+                            disabled={savingSched}
+                            className="flex-1 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 py-2.5 text-[11px] font-extrabold text-slate-950 disabled:opacity-50 transition active:scale-95"
+                          >
+                            {savingSched ? 'Saving...' : 'Save Changes'}
+                          </button>
+                          <button
+                            onClick={() => setEditSchedId(null)}
+                            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[11px] font-bold text-slate-300 transition active:scale-95"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <div className="glass-inset shrink-0 rounded-lg px-2.5 py-1.5 text-center">
+                            <div className="text-[8.5px] font-bold uppercase tracking-wide text-slate-500">{monthShort}</div>
+                            <div className="text-[15px] font-black leading-none text-[#7EB3FF]">{dayNum}</div>
+                            <div className="mt-0.5 text-[8px] font-bold uppercase text-slate-600">{weekday}</div>
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 truncate text-[14.5px] font-bold text-slate-100">
+                              <MapPin className="h-3.5 w-3.5 shrink-0 text-emerald-300/80" />
+                              {row.city}
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              {isToday && (
+                                <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-wide text-amber-300">
+                                  TODAY
+                                </span>
+                              )}
+                              {row.source === 'dashboard' && (
+                                <span className="rounded-full border border-sky-300/20 bg-sky-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-wide text-sky-300">
+                                  FROM DASHBOARD
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            onClick={() => {
+                              setEditSchedId(row.id || null);
+                              setEditSchedDate(row.date);
+                              setEditSchedCity(row.city);
+                            }}
+                            className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition active:scale-95 hover:text-slate-200"
+                            title="Edit date / city"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteSchedRow(row)}
+                            className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition active:scale-95 hover:text-rose-300"
+                            title="Remove"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* DUTY STRIP — glass overview (worker only, same 2 rows jaisa demo) */}
       {profile.role === 'worker' && (
@@ -989,7 +1352,12 @@ export default function Home({ profile, onLogout }: HomeProps) {
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5 pl-2">
                   <MetaChip icon={CalendarDays} label="Task Date" value={fmtDate(t.startAt)} />
                   <MetaChip icon={Timer} label="Duration" value={fmtDate(t.deadlineAt)} />
-                  <MetaChip icon={UserRound} label={isManager ? 'To' : 'By'} value={isManager ? t.toName : t.byName} />
+                  <PersonChip
+                    photoMap={photoMap}
+                    uid={isManager ? t.toUid : t.byUid}
+                    name={isManager ? t.toName : t.byName}
+                    label={isManager ? 'To' : 'By'}
+                  />
                 </div>
                 {canTap && (
                   <div className="mt-2 pl-2 text-[10px] font-extrabold tracking-wide text-[#4C9EFF]">Tap to verify →</div>
@@ -1026,7 +1394,12 @@ export default function Home({ profile, onLogout }: HomeProps) {
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                   <MetaChip icon={CalendarDays} label="Task Date" value={fmtDate(t.startAt)} />
                   <MetaChip icon={Timer} label="Duration" value={fmtDate(t.deadlineAt)} />
-                  <MetaChip icon={UserRound} label={isManager ? 'To' : 'By'} value={isManager ? t.toName : t.byName} />
+                  <PersonChip
+                    photoMap={photoMap}
+                    uid={isManager ? t.toUid : t.byUid}
+                    name={isManager ? t.toName : t.byName}
+                    label={isManager ? 'To' : 'By'}
+                  />
                 </div>
               </div>
             ))}

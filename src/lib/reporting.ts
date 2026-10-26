@@ -75,11 +75,25 @@ export function fetchLocation(opts?: { timeoutMs?: number; retries?: number }): 
   const tryOnce = (): Promise<any> =>
     new Promise((resolve) => {
       if (!('geolocation' in navigator)) return resolve(null);
+      // HARD TIMEOUT (GPS toggle bug — Boss report 2026-10-27: "kabhi kabhi
+      // location off karne ke baad wapis on karne par app bolta hai k aapka
+      // GPS location on nahi hai"): Android WebView me location OFF->ON flap
+      // ke baad getCurrentPosition ke callbacks KABHI-KABHI FIRE HI NAHI hote
+      // — bina iske promise hamesha ke liye atak jata tha, gate 'gps' /
+      // 'gps-off-live' se aage kabhi nahi badhta tha. timeoutMs+2500 par
+      // force-resolve (code 3 jaisa) — retry/null logic waisa hi chalega.
+      let settled = false;
+      const done = (v: any) => {
+        if (settled) return;
+        settled = true;
+        resolve(v);
+      };
       navigator.geolocation.getCurrentPosition(
-        resolve,
-        (e) => resolve({ __err: e }),
+        done,
+        (e) => done({ __err: e }),
         { timeout: timeoutMs, enableHighAccuracy: true, maximumAge: 0 }
       );
+      window.setTimeout(() => done({ __err: { code: 3, message: 'hard-timeout' } }), timeoutMs + 2500);
     });
   return (async () => {
     let attempts = 0;

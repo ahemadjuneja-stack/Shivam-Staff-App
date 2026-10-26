@@ -85,6 +85,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
           city: userData.city || 'Main',
           role: (userData.role === 'sales' || userData.role === 'salesman' || userData.role === 'sales_manager') ? 'sales' : (userData.role === 'manager' || userData.role === 'admin') ? 'manager' : 'worker',
           status: 'active',
+          photo: typeof userData.photo === 'string' && userData.photo ? userData.photo : undefined,
           createdAt:
             typeof userData.createdAt === 'number'
               ? userData.createdAt

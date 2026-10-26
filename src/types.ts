@@ -12,6 +12,31 @@ export interface UserProfile {
   status: UserStatus;
   createdAt: number;
   approvedAt?: number;
+  // PROFILE PHOTO (Boss order 2026-10-27): naam ke saath DP har jagah —
+  // compressed dataURL (JPEG ~256px, Firestore doc me hi — Storage nahi)
+  photo?: string;
+}
+
+// LINE SCHEDULE (Boss order 2026-10-27): salesman tour plan — kis date kis
+// city me jaana hai. App me khud likh sakta hai (source:'self') ya dashboard
+// XL upload / monthly builder se aata hai (source:'dashboard').
+// VERIFICATION (dashboard Tours page): us date ki loc_sessions GPS points
+// city coords se match -> green (visited) / red (not visited).
+export interface ScheduleEntry {
+  id?: string;
+  uid: string;
+  name: string;
+  phone?: string;
+  date: string;         // 'YYYY-MM-DD' (local)
+  city: string;
+  cityKey: string;      // lowercase normalized — dedupe/search
+  month: string;        // 'YYYY-MM'
+  source: 'self' | 'dashboard';
+  createdBy?: string;   // dashboard upload par manager naam
+  createdAt: number;
+  updatedAt?: number;
+  cityLat?: number;     // geocoded center (Nominatim) — verification ke liye
+  cityLng?: number;
 }
 
 // TASK SYSTEM (Boss order 2026-10-25):

@@ -127,6 +127,13 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   const centerRef = useRef<{ lat: number; lng: number; radius: number } | null>(null);
   const probeInFlightRef = useRef(false);
   const probeErrStreakRef = useRef(0);
+  // GPS TOGGLE BUG FIX (Boss report 2026-10-27: location OFF->ON par app kabhi-
+  // kabhi 'GPS on nahi hai' bolta rehta hai): probe/runCheck IN-FLIGHT STUCK
+  // detection — WebView callbacks hang hone par ye flags hamesha ke liye true
+  // reh jate the, phir recovery (probe/runCheck) KABHI dobara nahi chalta tha.
+  const probeStartedAtRef = useRef(0);
+  const runCheckInFlightRef = useRef(false);
+  const checkStartedAtRef = useRef(0);
 
   // LIVE MONITORING (Boss order 2026-10-26): app open hone ke BAAD bhi location
   // monitor rahe — pehle sirf start par check hota tha, isliye staff location
@@ -216,16 +223,29 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     const kind = stateKindRef.current;
     if (kind === 'denied' || kind === 'far' || kind === 'checking') return;
     probeInFlightRef.current = true;
+    probeStartedAtRef.current = Date.now();
     try {
       const pos: any = await new Promise((resolve) => {
+        // HARD TIMEOUT 19s (GPS toggle bug fix): location OFF->ON flap ke baad
+        // WebView callbacks kabhi fire nahi karta — force-resolve (code 3 jaisa
+        // treat, lock nahi hota) taaki probe IN-FLIGHT kabhi stuck na rahe aur
+        // agli cycle me recovery phir se try kar sake.
+        let settled = false;
+        const done = (v: any) => {
+          if (settled) return;
+          settled = true;
+          resolve(v);
+        };
         navigator.geolocation.getCurrentPosition(
-          resolve,
-          (e) => resolve({ __err: e }),
+          done,
+          (e) => done({ __err: e }),
           { timeout: 15000, enableHighAccuracy: true, maximumAge: 0 }
         );
+        window.setTimeout(() => done({ __err: { code: 3, message: 'probe-hard-timeout' } }), 19000);
       });
       if (!mounted.current) return;
       probeInFlightRef.current = false;
+      probeStartedAtRef.current = 0;
       if (pos && pos.__err) {
         const code = Number(pos.__err.code);
         if (code === 1) {
@@ -279,6 +299,7 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
       }
     } catch {
       probeInFlightRef.current = false;
+      probeStartedAtRef.current = 0;
     }
   };
 
@@ -286,6 +307,18 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     if (!gated) return;
     const iv = window.setInterval(() => {
       if (!mounted.current) return;
+      // STALE PROBE GUARD (GPS toggle bug fix): probe 26s+ se 'in-flight'
+      // atka ho (WebView callbacks hang) to force-reset — warna recovery
+      // hamesha ke liye band ho jati thi aur 'No GPS Signal' screen stick
+      // rehti thi jabki location ON thi.
+      if (
+        probeInFlightRef.current &&
+        probeStartedAtRef.current &&
+        Date.now() - probeStartedAtRef.current > 26000
+      ) {
+        probeInFlightRef.current = false;
+        probeStartedAtRef.current = 0;
+      }
       runProbe();
     }, 10000);
     return () => window.clearInterval(iv);
@@ -456,6 +489,22 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
 
   const runCheck = async () => {
     if (!mounted.current) return;
+    // IN-FLIGHT GUARD (GPS toggle bug fix): location toggle par broadcast +
+    // permissions-change + probe TEENO ek saath runCheck fire karte the —
+    // stacked checks double fetch + state race karte the. Ab ek waqt me ek.
+    if (runCheckInFlightRef.current) return;
+    runCheckInFlightRef.current = true;
+    checkStartedAtRef.current = Date.now();
+    try {
+      await runCheckInner();
+    } finally {
+      runCheckInFlightRef.current = false;
+      checkStartedAtRef.current = 0;
+    }
+  };
+
+  const runCheckInner = async () => {
+    if (!mounted.current) return;
     setState({ kind: 'checking' });
     const center = await getShopCenter();
     if (!mounted.current) return;
@@ -508,6 +557,27 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
     runCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gated, isWorker]); // isWorker: live role change (worker<->sales) par fresh check
+
+  // CHECKING WATCHDOG (GPS toggle bug fix): 'checking' state 22s+ atki ho
+  // (fetchLocation hang — WebView quirk) to 'gps' screen pe le aao — user ko
+  // Retry button milta hai aur probe recovery bhi phir se chalta hai.
+  useEffect(() => {
+    if (!gated) return;
+    const iv = window.setInterval(() => {
+      if (!mounted.current) return;
+      if (
+        runCheckInFlightRef.current &&
+        checkStartedAtRef.current &&
+        Date.now() - checkStartedAtRef.current > 22000 &&
+        stateKindRef.current === 'checking'
+      ) {
+        runCheckInFlightRef.current = false;
+        checkStartedAtRef.current = 0;
+        setState({ kind: 'gps' });
+      }
+    }, 5000);
+    return () => window.clearInterval(iv);
+  }, [gated]);
 
   if (!gated || state.kind === 'pass') {
     return <>{children({ lat: 0, lng: 0 })}</>;
