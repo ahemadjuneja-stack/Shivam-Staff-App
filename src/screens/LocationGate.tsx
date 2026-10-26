@@ -52,6 +52,7 @@ type GateState =
   | { kind: 'denied' }                // permission reject hua
   | { kind: 'gps' }                   // GPS off / fix nahi mila
   | { kind: 'far'; distM: number }    // shop se door
+  | { kind: 'gps-off-live' }          // app chalte-chalte location band kar diya (Boss order: warning popup)
   | { kind: 'pass' };                 // andar hai — app open
 
 interface LocationGateProps {
@@ -68,11 +69,72 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   const retryTimer = useRef<number | null>(null);
   const mounted = useRef(true);
 
+  // LIVE MONITORING (Boss order 2026-10-26): app open hone ke BAAD bhi location
+  // monitor rahe — pehle sirf start par check hota tha, isliye staff location
+  // band karke ya bahar jaake app chala raha tha (koi popup nahi aata tha).
+  const watchIdRef = useRef<number | null>(null);
+  const lastFixAtRef = useRef<number>(0);
+  const gpsOffTimerRef = useRef<number | null>(null);
+
+  const stopWatch = () => {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    if (gpsOffTimerRef.current) {
+      window.clearTimeout(gpsOffTimerRef.current);
+      gpsOffTimerRef.current = null;
+    }
+  };
+
+  // Live GPS watch — fix mile to inside/outside decide, error pe (30s no-fix
+  // guard se false-positive avoid) GPS-OFF warning popup. Location wapas on
+  // hote hi watch khud recover karke popup hata dega.
+  const startLiveWatch = (center: { lat: number; lng: number; radius: number }) => {
+    if (!('geolocation' in navigator) || watchIdRef.current !== null) return;
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (!mounted.current) return;
+        lastFixAtRef.current = Date.now();
+        if (gpsOffTimerRef.current) {
+          window.clearTimeout(gpsOffTimerRef.current);
+          gpsOffTimerRef.current = null;
+        }
+        const d = distanceToShopM(pos.coords.latitude, pos.coords.longitude, center);
+        if (d <= center.radius) {
+          setState((prev) => (prev.kind === 'pass' ? prev : { kind: 'pass' }));
+          noteGpsFix(pos.coords.latitude, pos.coords.longitude, Date.now());
+        } else {
+          setState({ kind: 'far', distM: Math.round(d) });
+        }
+      },
+      (err) => {
+        if (!mounted.current) return;
+        if (err.code === err.PERMISSION_DENIED) {
+          setState({ kind: 'denied' });
+          return;
+        }
+        // GPS band / signal gone — turant popup nahi: 30s no-fix guard
+        // (shop ke andar GPS kabhi-kabhi late hota hai — false popup avoid)
+        if (gpsOffTimerRef.current) return;
+        gpsOffTimerRef.current = window.setTimeout(() => {
+          if (!mounted.current) return;
+          if (Date.now() - lastFixAtRef.current >= 30000) {
+            setState({ kind: 'gps-off-live' });
+          }
+          gpsOffTimerRef.current = null;
+        }, 30000);
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 25000 }
+    );
+  };
+
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       if (retryTimer.current) window.clearTimeout(retryTimer.current);
+      stopWatch();
     };
   }, []);
 
@@ -101,17 +163,15 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
       return;
     }
     noteGpsFix(loc.lat, loc.lng, loc.at); // is fix ko punches ke coords me bhi use karo
+    lastFixAtRef.current = Date.now();
     const distM = distanceToShopM(loc.lat, loc.lng, center);
     if (distM <= center.radius) {
       setState({ kind: 'pass' });
       requestAutoDutyOn(); // 100m andar + access = auto duty ON (Home uthata hai)
+      startLiveWatch(center); // BOSS RULE: app chalte-chalte bhi location monitor rahe
     } else {
       setState({ kind: 'far', distM: Math.round(distM) });
-      // AUTO-RETRY: shop wapas aate hi app khud khul jayegi (20s)
-      if (retryTimer.current) window.clearTimeout(retryTimer.current);
-      retryTimer.current = window.setTimeout(() => {
-        if (mounted.current) runCheck();
-      }, 20000);
+      startLiveWatch(center); // far me bhi watch — wapas aate hi khud pass hoga
     }
   };
 
@@ -187,6 +247,29 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
             >
               Retry GPS
             </button>
+          </>
+        )}
+
+        {state.kind === 'gps-off-live' && (
+          <>
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-rose-300/25 bg-rose-400/10">
+              <svg viewBox="0 0 24 24" className="h-8 w-8 text-rose-300" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 9v4M12 17h.01" strokeLinecap="round" />
+                <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-white">Location Turned Off</h2>
+            <p className="mt-2 text-[13.5px] leading-relaxed font-semibold text-slate-200">
+              Turning off location can lower your credit points.
+            </p>
+            <p className="mt-2.5 text-[12.5px] leading-relaxed text-slate-400">
+              Your device location is switched off while the app is running. Please turn
+              location back <b className="text-slate-200">ON</b> (GPS mode: High accuracy) —
+              the app will continue automatically as soon as your location is available again.
+            </p>
+            <div className="glass-inset mt-4 rounded-xl px-4 py-2.5 text-[10.5px] font-semibold text-amber-300/90">
+              This app monitors location the whole time you are working.
+            </div>
           </>
         )}
 
