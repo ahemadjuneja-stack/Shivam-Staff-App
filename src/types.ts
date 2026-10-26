@@ -93,6 +93,11 @@ export interface OutsideLog {
   createdAt: number;
   closedAt?: number;   // two-phase flow: close payload ka marker (purane logs me nahi)
   allowedMin?: number; // STOPWATCH order: manager ne dashboard se bola hua time set kiya
+  // TOUR PAUSE/RESUME (Boss order 2026-10-27): role salesman = time FREEZE,
+  // role staff wapas = WAHI SE resume. elapsed = now - fromAt - pauseMs
+  // - (pausedAt ? now - pausedAt : 0) — pause ka time kabhi count nahi hota.
+  pauseMs?: number;
+  pausedAt?: number;
   cutApplied?: boolean;
   cutPoints?: number;
   cutReason?: string;  // outside_reject / outside_approved / outside_ontime / outside_late / outside_no_notice

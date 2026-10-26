@@ -7,7 +7,7 @@
 // Dashboard manager NO dabaye to Home.tsx wala listener points AUTO
 // cut karta hai — koi manual credit editing nahi.
 // ============================================================
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, collection, query, where, updateDoc, runTransaction, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
 import { fetchLocation } from './reporting';
 import { enqueueOutbox } from './sync';
@@ -38,6 +38,11 @@ interface OutsideState {
   lat: number;
   lng: number;
   flags?: string[]; // integrity: gps_teleport / gps_low_accuracy
+  // TOUR PAUSE (Boss order 2026-10-27): role salesman = event freeze,
+  // role staff wapas = WAHI SE resume. pauseMs = completed pause total,
+  // pausedAt = current pause start (absent = running).
+  pauseMs?: number;
+  pausedAt?: number;
 }
 
 // Aakhri GPS fix — duty punch me real coords ke liye (GPS offline bhi chalta hai)
@@ -132,7 +137,9 @@ function openOutsideEvent(uid: string, name: string, st: OutsideState) {
 
 async function closeOutsideEvent(uid: string, name: string, st: OutsideState, toAt: number) {
   const docId = openDocId(uid, st.fromAt);
-  const outsideMin = Math.max(1, Math.round((toAt - st.fromAt) / 60000));
+  // TOUR PAUSE: pause ka time outsideMin me COUNT NAHI hota (Boss order
+  // 2026-10-27 — salesman role me freeze, staff role me wahi se resume)
+  const outsideMin = Math.max(1, Math.round((toAt - st.fromAt - (st.pauseMs || 0)) / 60000));
   const payload = {
     opId: `close-${docId}`,
     uid,
@@ -140,6 +147,7 @@ async function closeOutsideEvent(uid: string, name: string, st: OutsideState, to
     fromAt: st.fromAt,
     toAt,
     outsideMin,
+    pauseMs: st.pauseMs || 0,
     lat: st.lat,
     lng: st.lng,
     status: 'pending' as const,
@@ -148,6 +156,75 @@ async function closeOutsideEvent(uid: string, name: string, st: OutsideState, to
   };
   enqueueOutbox('outside_log', payload, `close-${docId}`); // JOURNAL FIRST
   await setDoc(doc(db, 'outside_logs', docId), payload, { merge: true }).catch(() => {}); // offline = cache queue
+}
+
+// ============================================================
+// TOUR PAUSE/RESUME (Boss order 2026-10-27):
+// "Juned ke pass Staff se Salesman roll diya hai to ab wo time period me
+//  nahi aata jab tak wo tour me hai aur jab tak uska role badla nahi jaata.
+//  Jab uska role badla jaye to wapis wahi se shuru hoga uska time duty
+//  jaha se wo chod kar agaya tha."
+// SALESMAN (role='sales'): naye outside events BAND, existing open events
+//   FREEZE (pausedAt set) — dashboard stopwatch ruk jata hai, timer bhi.
+// STAFF (role='worker'): paused events WAHI SE resume — pauseMs me pause
+//   duration accumulate hota hai, elapsed = now - fromAt - pauseMs. Pause
+//   ka time count NAHI hota — jaha chhoda tha wahi se shuru.
+// DONO idempotent guards ke saath — dashboard self-heal bhi same kaam
+// karta hai, double-pause/double-resume IMPOSSIBLE.
+// ============================================================
+
+// Salesman ban gaya / tour mode: apne saare OPEN outside logs freeze
+export async function pauseOwnOutsideEvents(uid: string) {
+  // (a) local state — current open event (turant, offline-safe)
+  const st = readState(uid);
+  if (st && typeof st.pausedAt !== 'number') {
+    st.pausedAt = Date.now();
+    writeState(st);
+    await setDoc(doc(db, 'outside_logs', openDocId(uid, st.fromAt)), { pausedAt: st.pausedAt }, { merge: true }).catch(() => {});
+  }
+  // (b) Firestore scan — purane orphan open logs (local state miss ho gaya
+  //     ya reinstall) bhi freeze honge. pausedAt guard = overwrite-safe.
+  try {
+    const snap = await getDocs(query(collection(db, 'outside_logs'), where('uid', '==', uid)));
+    snap.forEach((d) => {
+      const data = d.data() as Record<string, unknown>;
+      if (data.status !== 'open' || typeof data.pausedAt === 'number') return;
+      updateDoc(d.ref, { pausedAt: Date.now() }).catch(() => {});
+    });
+  } catch {
+    // offline — local (a) cover karta hai, net aane par outbox/dashboard self-heal
+  }
+}
+
+// Staff role wapas aaya: paused events WAHI SE resume (single transaction
+// writer — pauseMs accumulate exact, double-resume impossible)
+export async function resumeOwnOutsideEvents(uid: string) {
+  try {
+    const snap = await getDocs(query(collection(db, 'outside_logs'), where('uid', '==', uid)));
+    snap.forEach((d) => {
+      runTransaction(db, async (tx) => {
+        const s = await tx.get(d.ref);
+        if (!s.exists()) return;
+        const data = s.data() as Record<string, unknown>;
+        if (data.status !== 'open') return;
+        const pausedAt = Number(data.pausedAt);
+        if (!Number.isFinite(pausedAt) || pausedAt <= 0) return; // running — nothing to resume
+        tx.update(d.ref, {
+          pauseMs: (Number(data.pauseMs) || 0) + Math.max(0, Date.now() - pausedAt),
+          pausedAt: deleteField()
+        });
+      }).catch(() => {});
+    });
+  } catch {
+    // offline — resume net aane par ya dashboard self-heal se hoga
+  }
+  // local state sync (Firestore hi single source — local approximation)
+  const st = readState(uid);
+  if (st && typeof st.pausedAt === 'number') {
+    st.pauseMs = (st.pauseMs || 0) + Math.max(0, Date.now() - st.pausedAt);
+    st.pausedAt = undefined;
+    writeState(st);
+  }
 }
 
 // ---- LOCATION GATE helpers (Boss order: app open par 100m check) ----
@@ -167,8 +244,24 @@ export function distanceToShopM(lat: number, lng: number, center: { lat: number;
 // Har sample: duty ON me GPS fix lo, radius check karo, state machine chalao.
 // Bahar open event ka FireStore doc TURANT likha jata hai (status 'open') —
 // dashboard popup + stopwatch live. Duty OFF -> open event turant close.
+// TOUR PAUSE (Boss order 2026-10-27): salesman role = NO sampling (naye
+// events band) + apne open logs FREEZE; staff role = paused logs resume.
 export async function sampleGeofence(profile: UserProfile, isOnDuty: boolean) {
-  if (!profile.uid || profile.role === 'manager') return;
+  if (!profile.uid) return;
+  const role = (profile.role || '').toLowerCase();
+  if (role === 'sales' || role === 'salesman') {
+    // TOUR MODE: tracking pause — naya event nahi, open event freeze
+    await pauseOwnOutsideEvents(profile.uid).catch(() => {});
+    return;
+  }
+  if (role === 'manager') return;
+  // worker (staff): role wapas aaya ho to paused events wahi se resume
+  {
+    const st = readState(profile.uid);
+    if (st && typeof st.pausedAt === 'number') {
+      await resumeOwnOutsideEvents(profile.uid).catch(() => {});
+    }
+  }
   if (!isOnDuty) {
     const st = readState(profile.uid);
     if (st) {
@@ -204,7 +297,14 @@ export async function sampleGeofence(profile: UserProfile, isOnDuty: boolean) {
 
 // Mount cleanup: app band tha, event open reh gaya, sample 30+ min purana ->
 // lastAt tak ka log likho (aage naya event khud khul jayega)
+// TOUR PAUSE: salesman role me stale close NAHI — event freeze hi rahega
+// (close karne se pause ke beech ka time galat count hota)
 export async function closeStaleOutsideEvent(profile: UserProfile) {
+  const role = (profile.role || '').toLowerCase();
+  if (role === 'sales' || role === 'salesman') {
+    await pauseOwnOutsideEvents(profile.uid).catch(() => {});
+    return;
+  }
   const st = readState(profile.uid);
   if (st && Date.now() - st.lastAt > STALE_MS) {
     writeState(null);

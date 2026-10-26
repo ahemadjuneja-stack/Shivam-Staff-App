@@ -599,9 +599,11 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // ---------- DUTY HEARTBEAT + APP-CLOSE GAP (security — Boss: "staff har tarha
   // ki koshish karega timing bypass ki"): ON duty me har 60s heartbeat (localStorage,
   // net nahi chahiye). App 20 min+ silent raha (force-close/background) to reopen
-  // par duty_gaps log banta hai — dashboard manager ko dikhta hai. ----------
+  // par duty_gaps log banta hai — dashboard manager ko dikhta hai.
+  // TOUR RULE (Boss order 2026-10-27): salesman role me duty gaps NAHI —
+  // tour me app band hona normal hai, jab tak role badla nahi tracking off. ----------
   useEffect(() => {
-    if (profile.role === 'manager') return;
+    if (profile.role === 'manager' || profile.role === 'sales') return;
     const check = () => {
       if (isOnDuty) heartbeatTouch(profile.uid);
       const gap = detectDutyGap(profile.uid, isOnDuty);
