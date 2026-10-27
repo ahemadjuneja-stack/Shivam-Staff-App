@@ -237,6 +237,162 @@ export function fmtClock(ms: number): string {
   return `${h}:${String(m).padStart(2, '0')} ${ap}`;
 }
 
+// ---------- SALES DATE-WISE HISTORY (Boss order 2026-10-28: "Salesmen ka
+// data Date aur din ke hisab se karo — DP par click ho aaj kaha gaya, uske
+// bad kis date me kaha gaya kitne baje location on kiya us din ka khatam,
+// uske niche purani date 8 din ka data") ----------
+// Har LOCAL CALENDAR DAY ka apna bucket: [raat 12, agle raat 12) — sessions ke
+// points + on/off events us din me daale jate hain. Aaj pehle, phir pichle
+// 8 din (naye purane). Empty din bhi row banega ("Location ON nahi ki") —
+// Boss ko non-compliance dikhna zaroori hai.
+export interface RawPointLike { at: number; lat?: number; lng?: number }
+export interface RawSessionLike {
+  startedAt?: number;
+  status?: string;      // 'open' | 'closed'
+  endedAt?: number;
+  points?: RawPointLike[];
+}
+export interface RawLocEventLike { type?: string; at: number; lat?: number; lng?: number }
+
+export interface DayStop { at: number; label: string }
+export interface DayTrack {
+  dateKey: string;   // '2026-10-28' (expand-state key)
+  dayLabel: string;  // '28 Oct · Tue' (date + DIN — Boss: "Date aur din ke hisab se")
+  onAt: number;      // kitne baje location ON kiya (0 = nahi)
+  lastAt: number;    // us din ka khatam — aakhri activity (0 = koi data nahi)
+  endOpen: boolean;  // open session aaj ACTIVE (din abhi khatam nahi hua)
+  stops: DayStop[];  // kaha kaha gaya (chronological, city labels)
+  hasData: boolean;
+}
+
+const MONTHS_S = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WDAYS_S = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// "28 Oct · Tue" — Line Schedule wala hi compact format
+export function fmtDayLabel(at: number): string {
+  const d = new Date(at);
+  return `${d.getDate()} ${MONTHS_S[d.getMonth()]} · ${WDAYS_S[d.getDay()]}`;
+}
+
+// local midnight — dayOffset din shift karke (month/year rollback safe:
+// setDate khud sambhalta hai, ms-arithmetic DST/month-edge par slip karta hai)
+function localMidnight(now: number, dayOffset: number): number {
+  const d = new Date(now);
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+export function buildDayTracks(
+  sessions: RawSessionLike[],
+  events: RawLocEventLike[],
+  cities: CityCoord[],
+  now: number,
+  opts?: { pastDays?: number; labeler?: (lat: number, lng: number) => string }
+): { today: DayTrack; past: DayTrack[] } {
+  const pastDays = Math.max(1, opts?.pastDays ?? 8);
+  const labeler =
+    opts?.labeler ??
+    ((lat: number, lng: number) => {
+      const c = nearestCity(lat, lng, cities);
+      return c ? c.city : `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+    });
+
+  interface Bucket {
+    start: number;
+    end: number;
+    onAt: number;
+    lastAt: number;
+    pts: DayStop[];
+    openActive: boolean; // open session ka activity/started isi bucket me
+  }
+  const buckets: Bucket[] = [];
+  const mkBucket = (start: number, end: number): Bucket => ({ start, end, onAt: 0, lastAt: 0, pts: [], openActive: false });
+  const todayStart = localMidnight(now, 0);
+  buckets.push(mkBucket(todayStart, localMidnight(now, 1))); // aaj (index 0)
+  for (let i = 1; i <= pastDays; i++) {
+    buckets.push(mkBucket(localMidnight(now, -i), localMidnight(now, -i + 1)));
+  }
+  const inB = (at: number): Bucket | null => {
+    if (!Number.isFinite(at) || at <= 0 || at > now) return null; // future guard
+    for (const b of buckets) if (at >= b.start && at < b.end) return b;
+    return null;
+  };
+
+  // (1) SESSIONS — points (kaha gaya) + startedAt (ON moment) + endedAt (khatam)
+  for (const s of sessions) {
+    if (!s) continue;
+    const isOpen = s.status === 'open';
+    const st = Number(s.startedAt) || 0;
+    const stB = inB(st);
+    if (stB) {
+      if (stB.onAt === 0 || st < stB.onAt) stB.onAt = st;
+      if (isOpen) stB.openActive = true;
+    }
+    const ed = Number(s.endedAt) || 0;
+    const edB = inB(ed);
+    if (edB) edB.lastAt = Math.max(edB.lastAt, ed);
+    for (const p of Array.isArray(s.points) ? s.points : []) {
+      const at = Number(p?.at) || 0;
+      const b = inB(at);
+      if (!b) continue;
+      const lat = Number(p?.lat);
+      const lng = Number(p?.lng);
+      b.pts.push({ at, label: Number.isFinite(lat) && Number.isFinite(lng) ? labeler(lat, lng) : '—' });
+      // resume-session edge: ON event kal ka, aaj ki pehli activity = aaj ka ON moment
+      if (b.onAt === 0 || at < b.onAt) b.onAt = at;
+      if (isOpen) b.openActive = true;
+    }
+  }
+  // (2) EVENTS — 'on' (ON moment, session start se pehle bhi ho sakta hai)
+  //     + 'off' (khatam ka precise moment — aakhri point ke baad bhi)
+  for (const e of events) {
+    if (!e) continue;
+    const at = Number(e.at) || 0;
+    const b = inB(at);
+    if (!b) continue;
+    if (e.type === 'on') {
+      if (b.onAt === 0 || at < b.onAt) b.onAt = at;
+    } else if (e.type === 'off') {
+      b.lastAt = Math.max(b.lastAt, at);
+    }
+  }
+
+  const toTrack = (b: Bucket, isToday: boolean): DayTrack => {
+    const d = new Date(b.start);
+    const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    b.pts.sort((x, y) => x.at - y.at);
+    return {
+      dateKey,
+      dayLabel: fmtDayLabel(b.start),
+      onAt: b.onAt,
+      lastAt: Math.max(b.lastAt, b.pts.length ? b.pts[b.pts.length - 1].at : 0),
+      endOpen: isToday && b.openActive,
+      stops: b.pts,
+      hasData: b.onAt > 0 || b.lastAt > 0 || b.pts.length > 0
+    };
+  };
+
+  const today = toTrack(buckets[0], true);
+  const past = buckets.slice(1).map((b) => toTrack(b, false));
+  return { today, past };
+}
+
+// Open session ka aakhri activity — zombie-session guard ke liye (banner:
+// open session par bhi agar 12h se koi activity nahi to "abhi ON hai" MAT
+// dikhao — locTrack ka apna 12h stale-close window isi se match hota hai)
+export function openSessionLastActive(sessions: RawSessionLike[], now: number): number {
+  let best = 0;
+  for (const s of sessions) {
+    if (!s || s.status !== 'open') continue;
+    const pts = Array.isArray(s.points) ? s.points : [];
+    const lastPt = pts.length ? Number(pts[pts.length - 1]?.at) || 0 : 0;
+    const cand = Math.max(lastPt, Number(s.startedAt) || 0);
+    if (cand > best && cand <= now) best = cand;
+  }
+  return best;
+}
+
 // ---------- OUTSIDE FILTER (Boss: "dukan ke kaam se gaya tha to nahi dikhna
 // chahiye, agar bina bataye gaya tabhi show hona chahiye") ----------
 // HIDE: approved (manager ne haan boli) YA allowedMin set (STOPWATCH — manager

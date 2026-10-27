@@ -3,13 +3,16 @@ import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firesto
 import { db } from '../firebase';
 import Avatar from '../components/Avatar';
 import {
-  MapPin, Pin, PinOff, Clock, CheckCircle2, LogIn, LogOut, Timer, Footprints, Compass, Route
+  MapPin, Pin, PinOff, Clock, CheckCircle2, LogIn, LogOut, Timer, Footprints, Compass,
+  CalendarDays, History, ChevronDown, Power
 } from 'lucide-react';
 import { useSwipeBack, SWIPE_OVERLAY_STYLE } from '../lib/swipeBack';
 import {
   CityCoord, DutyUserMeta, PunchLike, OutsideLogLike,
   nearestCity, fmtAgo, fmtClock,
-  summarizePunchesToday, daysSinceOn, isUnannouncedOutside, FRESH_WINDOW_MS
+  summarizePunchesToday, daysSinceOn, isUnannouncedOutside, FRESH_WINDOW_MS,
+  buildDayTracks, openSessionLastActive,
+  DayTrack, RawSessionLike, RawLocEventLike
 } from '../lib/onDuty';
 
 // "15M" | "2H 30M" | "4H"
@@ -25,17 +28,28 @@ const fmtDurLocal = (min: number): string => {
 // STAFF DETAIL SCREEN (Boss order 2026-10-28):
 // Board ki row/DP par tap -> yeh screen khulti hai (sirf MANAGER ke liye).
 //
-// SALES: last kahan location ON ki + poore din me kaha kaha gaya (aaj ke
-//   loc_session points, chronological) + agar location ON nahi kiya to
-//   "Location N din purana hai" banner (calendar days).
+// SALES — DATE AUR DIN KE HISAB SE (Boss 2nd order: "Salesmen ka data Date
+//   aur din ke hisab se karo — DP par click ho aaj kaha gaya, uske bad kis
+//   date me kaha gaya kitne baje location on kiya us din ka khatam, uske
+//   niche purani date 8 din ka data"):
+//     1) AAJ card — aaj location kitne baje ON kiya + din ka khatam (abhi
+//        ON hai ya kitne baje band) + aaj ka poora route (chronological)
+//     2) PURANE DIN — pichle 8 calendar din (naye purane): har date ki row
+//        (date + din) me ON time + khatam time + route summary; tap par us
+//        din ka poora kaha-kaha-gaya list khulta hai. Jis din location ON
+//        nahi hui wo bhi row dikhti hai ("us din location ON nahi ki") —
+//        non-compliance chhupti nahi.
+//     Banner: open session + 12h activity = "abhi ON hai"; warna calendar
+//     days ("Location N din purana hai") — zombie-session honest fix.
 // WORKER: kitne baje duty par aaya, kab duty off ki, total on-duty + aaj ke
 //   BINA-BATAYE bahar events (dukan ke kaam / authorized = approved ya
 //   allowedMin wale HIDE — Boss rule).
 //
-// DATA SIRF TODAY KA (Boss: "data sirf today ka dikhe new din new data").
-// Sab queries equality-only (composite index ki zaroorat nahi — app ke
-// established patterns: punches/outside_logs uid==, loc_sessions uid+status).
-// BOSS RULE: koi back button nahi — left-edge slide se band (useSwipeBack).
+// Har din LOCAL midnight bucket [raat 12, agle raat 12) — new din new data;
+// resume-session ke points apne-apne din me sort hote hain (locTrack ke 12h
+// resume rule ke saath compatible). Sab queries equality-only (composite
+// index ki zaroorat nahi — app ke established patterns). BOSS RULE: koi
+// back button nahi — left-edge slide se band (useSwipeBack).
 // ============================================================
 
 export interface StaffDetailTarget {
@@ -48,6 +62,64 @@ export interface StaffDetailTarget {
 interface TourStop {
   at: number;
   label: string;
+}
+
+// consecutive duplicate labels dedupe -> "Bhuj → Mundra → Bhuj" (route summary)
+function routeSummary(stops: TourStop[]): string {
+  const seq: string[] = [];
+  for (const s of stops) {
+    if (seq.length === 0 || seq[seq.length - 1] !== s.label) seq.push(s.label);
+  }
+  return seq.join(' → ');
+}
+
+// PURANE DIN ki ek row — collapsed: date + ON/Khatam times + route summary;
+// tap -> us din ka poora kaha-kaha-gaya list (empty din = "ON nahi ki")
+function DayRow({ day, expanded, onToggle }: { day: DayTrack; expanded: boolean; onToggle: () => void }) {
+  if (!day.hasData) {
+    return (
+      <div className="py-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[12.5px] font-bold text-slate-400">{day.dayLabel}</span>
+          <span className="text-[11px] text-slate-600">—</span>
+        </div>
+        <p className="mt-0.5 text-[11.5px] text-amber-300/60">Us din location ON nahi ki</p>
+      </div>
+    );
+  }
+  return (
+    <div className="py-1">
+      <button onClick={onToggle} className="flex w-full items-center gap-2 py-1.5 text-left transition active:scale-[0.99]">
+        <span className="w-[92px] shrink-0 text-[12.5px] font-bold text-slate-100">{day.dayLabel}</span>
+        <span className="min-w-0 flex-1 truncate text-right text-[11px] font-semibold text-slate-400">
+          ON {day.onAt ? fmtClock(day.onAt) : '—'}
+          <span className="mx-1 text-slate-600">·</span>
+          Khatam {day.lastAt ? fmtClock(day.lastAt) : '—'}
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+      {expanded && (
+        <div className="pb-2">
+          <p className="mb-1 truncate text-[11px] font-semibold text-[#7EB3FF]">
+            {routeSummary(day.stops)} · {day.stops.length} points
+          </p>
+          {day.stops.length === 0 ? (
+            <p className="text-[12px] text-slate-500">Koi movement nahi.</p>
+          ) : (
+            <div className="max-h-[240px] divide-y divide-white/[0.05] overflow-y-auto overscroll-contain">
+              {day.stops.map((s, i) => (
+                <div key={`${s.at}-${i}`} className="flex items-center gap-3 py-1.5">
+                  <span className="w-[64px] shrink-0 text-[11px] font-bold tabular-nums text-slate-500">{fmtClock(s.at)}</span>
+                  <MapPin className="h-3 w-3 shrink-0 text-slate-500" />
+                  <span className="truncate text-[12.5px] font-semibold text-slate-200">{s.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function StaffDetailScreen({
@@ -70,11 +142,11 @@ export default function StaffDetailScreen({
   const [userMeta, setUserMeta] = useState<DutyUserMeta | null>(null);
 
   // ---------- SALES state ----------
-  const [lastOnAt, setLastOnAt] = useState<number>(0);
-  const [lastOnLabel, setLastOnLabel] = useState<string>('—');
-  const [openSession, setOpenSession] = useState<boolean>(false);
-  const [tour, setTour] = useState<TourStop[]>([]);
-  const [tourLoaded, setTourLoaded] = useState(false);
+  const [lastOnAt, setLastOnAt] = useState<number>(0);          // banner daysSinceOn (aakhri ON event)
+  const [openRecent, setOpenRecent] = useState<boolean>(false); // open session + 12h activity = "abhi ON hai"
+  const [days, setDays] = useState<{ today: DayTrack; past: DayTrack[] } | null>(null);
+  const [salesLoaded, setSalesLoaded] = useState(false);
+  const [openDayKey, setOpenDayKey] = useState<string>('');     // kaunsa purana din expand hai
 
   // ---------- WORKER state ----------
   const [punches, setPunches] = useState<PunchLike[]>([]);
@@ -85,11 +157,6 @@ export default function StaffDetailScreen({
   // ---------- Load (ek baar open par) ----------
   useEffect(() => {
     let alive = true;
-    const dayStart = new Date().setHours(0, 0, 0, 0);
-    const cityLabel = (lat: number, lng: number): string => {
-      const c = nearestCity(lat, lng, cities);
-      return c ? c.city : `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
-    };
 
     getDoc(doc(db, 'users', staff.uid))
       .then((s) => {
@@ -107,55 +174,51 @@ export default function StaffDetailScreen({
       .catch(() => {});
 
     if (isSales) {
-      // (1) loc_events: last kahan/kab location ON ki (uid+type equality-only ✓)
-      getDocs(query(collection(db, 'loc_events'), where('uid', '==', staff.uid), where('type', '==', 'on')))
+      // (1) loc_events: saare ON/OFF events EK hi query me (uid equality-only ✓)
+      //     ON = kitne baje location on kiya · OFF = us din ka khatam moment
+      const evP = getDocs(query(collection(db, 'loc_events'), where('uid', '==', staff.uid)))
         .then((snap) => {
-          if (!alive) return;
-          let bestAt = 0;
-          let bestLat = 0;
-          let bestLng = 0;
+          if (!alive) return [] as RawLocEventLike[];
+          let bestOn = 0;
+          const rows: RawLocEventLike[] = [];
           snap.forEach((d) => {
             const v = d.data() as any;
             const at = Number(v.at) || 0;
-            if (at > bestAt) {
-              bestAt = at;
-              bestLat = Number.isFinite(v.lat) ? Number(v.lat) : 0;
-              bestLng = Number.isFinite(v.lng) ? Number(v.lng) : 0;
-            }
+            rows.push({ type: String(v.type || ''), at });
+            if (String(v.type) === 'on' && at > bestOn) bestOn = at;
           });
-          setLastOnAt(bestAt);
-          if (bestAt > 0 && bestLat !== 0 && bestLng !== 0) {
-            setLastOnLabel(cityLabel(bestLat, bestLng));
-          }
+          setLastOnAt(bestOn);
+          return rows;
         })
-        .catch(() => {});
-      // (2) loc_sessions: aaj ke saare sessions ke points = poore din ka tour
-      //     (uid equality-only — client-side today filter; established pattern)
-      getDocs(query(collection(db, 'loc_sessions'), where('uid', '==', staff.uid)))
+        .catch(() => [] as RawLocEventLike[]);
+      // (2) loc_sessions: saare sessions (uid equality-only ✓) — buildDayTracks
+      //     khud har LOCAL calendar-day bucket banata hai (aaj + pichle 8 din)
+      const seP = getDocs(query(collection(db, 'loc_sessions'), where('uid', '==', staff.uid)))
         .then((snap) => {
-          if (!alive) return;
-          let hasOpen = false;
-          const stops: TourStop[] = [];
+          if (!alive) return [] as RawSessionLike[];
+          const rows: RawSessionLike[] = [];
           snap.forEach((d) => {
             const v = d.data() as any;
-            if (v.status === 'open') hasOpen = true;
-            const pts = Array.isArray(v.points) ? v.points : [];
-            for (const p of pts) {
-              const at = Number(p?.at) || 0;
-              if (at < dayStart) continue; // SIRF TODAY (resume session me kal ke points skip)
-              const lat = Number(p?.lat);
-              const lng = Number(p?.lng);
-              stops.push({ at, label: Number.isFinite(lat) && Number.isFinite(lng) ? cityLabel(lat, lng) : '—' });
-            }
+            rows.push({
+              startedAt: Number(v.startedAt) || 0,
+              status: String(v.status || ''),
+              endedAt: v.endedAt === undefined ? undefined : Number(v.endedAt),
+              points: Array.isArray(v.points) ? v.points : []
+            });
           });
-          stops.sort((a, b) => a.at - b.at); // subah se shaam chronological
-          setTour(stops);
-          setOpenSession(hasOpen);
-          setTourLoaded(true);
+          return rows;
         })
-        .catch(() => {
-          if (alive) setTourLoaded(true);
-        });
+        .catch(() => [] as RawSessionLike[]);
+      Promise.all([evP, seP]).then(([events, sessions]) => {
+        if (!alive) return;
+        const t = Date.now();
+        setDays(buildDayTracks(sessions, events, cities, t));
+        // zombie-guard: open session par bhi 12h se koi activity nahi = "abhi
+        // ON hai" MAT dikhao (locTrack ke 12h stale-close window se match)
+        const openLast = openSessionLastActive(sessions, t);
+        setOpenRecent(openLast > 0 && t - openLast < 12 * 60 * 60 * 1000);
+        setSalesLoaded(true);
+      });
     } else {
       // (3) punches (uid equality-only ✓ — established pattern Home.tsx:291)
       getDocs(query(collection(db, 'punches'), where('uid', '==', staff.uid)))
@@ -214,9 +277,10 @@ export default function StaffDetailScreen({
     return c ? c.city : `${loc.lat.toFixed(2)}, ${loc.lng.toFixed(2)}`;
   })() : 'Location nahi mili';
 
-  // SALES banner: open session = ON hai; warna calendar-days purana
+  // SALES banner: open session + recent activity = ON hai; warna calendar-days purana
+  // (zombie open session — 12h se no activity — "abhi ON hai" nahi dikhayega)
   const bannerDays = daysSinceOn(lastOnAt, now);
-  const banner = openSession
+  const banner = openRecent
     ? { tone: 'good' as const, text: 'Location abhi ON hai' }
     : bannerDays === 0
     ? { tone: 'warn' as const, text: 'Location aaj ON nahi hui' }
@@ -315,45 +379,90 @@ export default function StaffDetailScreen({
             </span>
           </div>
 
-          {/* Last location ON (kahan + kab) */}
+          {/* AAJ — Boss: "aaj kaha gaya, kitne baje location on kiya, us din ka khatam" */}
           <div className="glass-card intro-rise relative z-10 mt-3 rounded-2xl p-4">
-            <div className="mb-2 flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-[#4C9EFF]" />
-              <span className="text-[11px] font-extrabold tracking-[0.14em] text-slate-300">LAST LOCATION ON</span>
+            <div className="mb-2.5 flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-[#4C9EFF]" />
+              <span className="text-[11px] font-extrabold tracking-[0.14em] text-slate-300">AAJ</span>
+              <span className="text-[10.5px] font-bold text-slate-500">{days ? `· ${days.today.dayLabel}` : ''}</span>
+              <span className="ml-auto text-[10px] font-bold text-slate-500">
+                {days ? `${days.today.stops.length} points` : ''}
+              </span>
             </div>
-            {lastOnAt > 0 ? (
-              <div className="flex items-center justify-between text-[13px]">
-                <span className="font-bold text-slate-100">{lastOnLabel}</span>
-                <span className="text-[11.5px] text-slate-400">
-                  {fmtClock(lastOnAt)} · {fmtAgo(lastOnAt, now)} pehle
-                </span>
-              </div>
+            {!salesLoaded || !days ? (
+              <p className="py-2 text-[12.5px] text-slate-500">Loading…</p>
             ) : (
-              <p className="text-[12.5px] text-slate-500">Is staff ne abhi tak location ON nahi ki.</p>
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-[12.5px] text-slate-400">
+                    <Power className="h-3.5 w-3.5 text-emerald-300" /> Location ON kiya
+                  </span>
+                  <span
+                    className={`text-[13px] font-bold tabular-nums ${
+                      days.today.onAt ? 'text-slate-100' : 'text-rose-300'
+                    }`}
+                  >
+                    {days.today.onAt ? fmtClock(days.today.onAt) : 'Nahi kiya'}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-[12.5px] text-slate-400">
+                    <LogOut className="h-3.5 w-3.5 text-rose-300" /> Din ka khatam
+                  </span>
+                  {days.today.endOpen ? (
+                    <span className="flex items-center gap-1 rounded bg-emerald-400/15 px-1.5 py-0.5 text-[10px] font-extrabold tracking-wider text-emerald-300">
+                      <CheckCircle2 className="h-3 w-3" /> ABHI ON HAI
+                    </span>
+                  ) : (
+                    <span
+                      className={`text-[13px] font-bold tabular-nums ${
+                        days.today.lastAt ? 'text-slate-100' : 'text-slate-500'
+                      }`}
+                    >
+                      {days.today.lastAt ? fmtClock(days.today.lastAt) : '—'}
+                    </span>
+                  )}
+                </div>
+                {/* Aaj ka poora route — subah se ab tak, chronological */}
+                {days.today.stops.length === 0 ? (
+                  <p className="mt-2.5 border-t border-white/[0.05] pt-2.5 text-[12.5px] text-slate-500">
+                    {days.today.onAt || days.today.endOpen
+                      ? 'Location ON hai — movement aane par route yahan dikhega.'
+                      : 'Aaj koi movement nahi.'}
+                  </p>
+                ) : (
+                  <div className="mt-2.5 max-h-[280px] divide-y divide-white/[0.05] overflow-y-auto overscroll-contain border-t border-white/[0.05]">
+                    {days.today.stops.map((s, i) => (
+                      <div key={`${s.at}-${i}`} className="flex items-center gap-3 py-2">
+                        <span className="w-[64px] shrink-0 text-[11px] font-bold tabular-nums text-slate-500">{fmtClock(s.at)}</span>
+                        <MapPin className="h-3 w-3 shrink-0 text-slate-500" />
+                        <span className="truncate text-[12.5px] font-semibold text-slate-200">{s.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
 
-          {/* Aaj ka tour (poore din me kaha kaha gaya — chronological) */}
+          {/* PURANE DIN — Boss: "uske niche purani date 8 din ka data dikhna chahiye" */}
           <div className="glass-card intro-rise relative z-10 mt-3 rounded-2xl p-4">
-            <div className="mb-2 flex items-center gap-2">
-              <Route className="h-4 w-4 text-[#B7C5F0]" />
-              <span className="text-[11px] font-extrabold tracking-[0.14em] text-slate-300">AAJ KA TOUR</span>
-              <span className="ml-auto text-[10px] font-bold text-slate-500">{tour.length} points</span>
+            <div className="mb-1 flex items-center gap-2">
+              <History className="h-4 w-4 text-[#B7C5F0]" />
+              <span className="text-[11px] font-extrabold tracking-[0.14em] text-slate-300">PURANE DIN</span>
+              <span className="ml-auto text-[10px] font-bold text-slate-500">pichle 8 din</span>
             </div>
-            {!tourLoaded ? (
+            {!salesLoaded || !days ? (
               <p className="py-2 text-[12.5px] text-slate-500">Loading…</p>
-            ) : tour.length === 0 ? (
-              <p className="py-2 text-[12.5px] text-slate-500">
-                Aaj ka koi movement nahi — location ON hote hi har ~3 min ka route yahan dikhega.
-              </p>
             ) : (
-              <div className="max-h-[280px] divide-y divide-white/[0.05] overflow-y-auto overscroll-contain">
-                {tour.map((s, i) => (
-                  <div key={`${s.at}-${i}`} className="flex items-center gap-3 py-2">
-                    <span className="w-[64px] shrink-0 text-[11px] font-bold tabular-nums text-slate-500">{fmtClock(s.at)}</span>
-                    <MapPin className="h-3 w-3 shrink-0 text-slate-500" />
-                    <span className="truncate text-[12.5px] font-semibold text-slate-200">{s.label}</span>
-                  </div>
+              <div className="divide-y divide-white/[0.05]">
+                {days.past.map((d) => (
+                  <DayRow
+                    key={d.dateKey}
+                    day={d}
+                    expanded={openDayKey === d.dateKey}
+                    onToggle={() => setOpenDayKey(openDayKey === d.dateKey ? '' : d.dateKey)}
+                  />
                 ))}
               </div>
             )}
