@@ -801,10 +801,12 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // bhi likhta hai wo BHI yahan live dikhta hai (same collection).
   const [scheduleRows, setScheduleRows] = useState<ScheduleEntry[]>([]);
   const [showSchedForm, setShowSchedForm] = useState(false);
-  const [schedDate, setSchedDate] = useState(() => localYmd(Date.now()));
-  // MULTI-CITY (Boss order 2026-10-27: "Ek sath multiple city add karne ka option") —
-  // city rows array (1..8), save par saare ek hi date ke saath ban jaate hain
-  const [schedCities, setSchedCities] = useState<string[]>(['']);
+  // MULTI-CITY v2 (Boss order 2026-10-27: "City ke bagal me date bhi aani chahiye") —
+  // har row = CITY (left) + USKI DATE (right) pair; multiple rows = ek saath
+  // multiple city, alag-alag dates bhi (tour planning). Save par har pair apni entry.
+  const [schedRows, setSchedRows] = useState<{ city: string; date: string }[]>([
+    { city: '', date: localYmd(Date.now()) }
+  ]);
   const [savingSched, setSavingSched] = useState(false);
   const [editSchedId, setEditSchedId] = useState<string | null>(null);
   const [editSchedDate, setEditSchedDate] = useState('');
@@ -827,58 +829,59 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
   const addScheduleRow = async () => {
     if (savingSched) return;
-    if (!schedDate) {
-      window.alert('Please pick a date.');
+    if (schedRows.some((r) => !r.date)) {
+      window.alert('Please pick a date for every city.');
       return;
     }
-    // MULTI-CITY save: saare rows flat kiye — comma se likha city bhi split hota
-    // hai ("Junagadh, Patan" = 2 cities), cityKey dedupe (same city 2 baar likha
-    // to 1 hi entry). Deterministic id lsch-{uid}-{date}-{citykey} = duplicate doc
-    // phir bhi impossible; dashboard Tours page wahi collection padhta hai.
+    // MULTI-CITY save: har row ka (city, date) pair — comma se likha city bhi
+    // split hota hai ("Bhuj, Mundra" = 2 cities usi row ki date par),
+    // cityKey dedupe (same city+date 2 baar likha to 1 hi entry). Deterministic
+    // id lsch-{uid}-{date}-{citykey} = duplicate doc phir bhi impossible;
+    // dashboard Tours page wahi collection padhta hai.
     const seen = new Set<string>();
-    const cities: string[] = [];
-    schedCities.forEach((raw) =>
-      (raw || '')
+    const pairs: { city: string; date: string }[] = [];
+    schedRows.forEach((r) =>
+      (r.city || '')
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
         .forEach((city) => {
-          const k = cityKeyOf(city);
-          if (k && !seen.has(k)) {
+          const k = `${r.date}|${cityKeyOf(city)}`;
+          if (!seen.has(k)) {
             seen.add(k);
-            cities.push(city);
+            pairs.push({ city, date: r.date });
           }
         })
     );
-    if (!cities.length) {
+    if (!pairs.length) {
       window.alert('Please write the city name.');
       return;
     }
     setSavingSched(true);
     try {
       const results = await Promise.allSettled(
-        cities.map((city) =>
+        pairs.map((p) =>
           upsertScheduleEntry({
             uid: profile.uid,
             name: profile.name,
             phone: profile.mobile,
-            date: schedDate,
-            city,
+            date: p.date,
+            city: p.city,
             source: 'self'
           })
         )
       );
       const failed = results.filter((r) => r.status === 'rejected').length;
-      const saved = cities.length - failed;
+      const saved = pairs.length - failed;
       if (!saved) {
         window.alert('Could not save schedule: ' + String((results[0] as PromiseRejectedResult)?.reason?.message || 'network error, please try again.'));
         return;
       }
-      setSchedCities(['']);
+      setSchedRows([{ city: '', date: localYmd(Date.now()) }]);
       setShowSchedForm(false);
       showToast(
         failed
-          ? `${saved}/${cities.length} cities saved — check connection for the rest.`
+          ? `${saved}/${pairs.length} cities saved — check connection for the rest.`
           : `${saved} ${saved === 1 ? 'city' : 'cities'} saved to line schedule.`
       );
     } catch (e: any) {
@@ -1096,56 +1099,61 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
           {showSchedForm && (
             <div className="glass-card intro-rise mb-3 space-y-3 rounded-[20px] p-4">
-              {/* Boss order 2026-10-27: "City ko LEFT side rakho aur date ko RIGHT me"
-                  + "ek sath multiple city add karne ka option" — City column left
-                  (multi rows + comma split), Date single field right, save par
-                  har city ki apni entry (same date) banti hai. */}
-              <div className="flex gap-3">
-                <div className="min-w-0 flex-1">
-                  <label className="sec-label">City</label>
-                  {schedCities.map((c, i) => (
-                    <div key={i} className={`flex items-center gap-2 ${i === 0 ? 'mt-1.5' : 'mt-2'}`}>
-                      <input
-                        value={c}
-                        onChange={(e) =>
-                          setSchedCities((rows) => rows.map((r, ri) => (ri === i ? e.target.value : r)))
-                        }
-                        placeholder={i === 0 ? 'e.g. Junagadh' : 'Another city…'}
-                        className="glass-inset w-full min-w-0 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:border-amber-300/50 focus:outline-none"
-                      />
-                      {schedCities.length > 1 && (
-                        <button
-                          onClick={() => setSchedCities((rows) => rows.filter((_, ri) => ri !== i))}
-                          className="shrink-0 rounded-lg border border-white/10 bg-white/5 p-2 text-slate-500 transition active:scale-95 hover:text-rose-300"
-                          title="Remove this city"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                  {schedCities.length < 8 ? (
-                    <button
-                      onClick={() => setSchedCities((rows) => [...rows, ''])}
-                      className="mt-2 rounded-full border border-dashed border-emerald-300/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 transition active:scale-95"
-                    >
-                      + Add City
-                    </button>
-                  ) : (
-                    <div className="mt-2 text-[9.5px] font-bold uppercase tracking-wide text-slate-600">Max 8 cities at a time</div>
-                  )}
-                  <div className="mt-1.5 text-[9.5px] leading-snug text-slate-600">
-                    Tip: tap + Add City for more, or separate names with commas.
-                  </div>
-                </div>
-                <div className="w-[38%] shrink-0">
-                  <label className="sec-label">Date</label>
+              {/* Boss order 2026-10-27: "City ke bagal me date bhi aani chahiye" —
+                  har row me CITY (left) ke saath USKI DATE (right) + X remove;
+                  har city ki apni entry banti hai, dates alag-alag bhi chal sakti hain. */}
+              <div className="flex items-center gap-2">
+                <span className="sec-label min-w-0 flex-1">City</span>
+                <span className="sec-label w-[37%] shrink-0">Date</span>
+                {schedRows.length > 1 && <span className="w-[30px] shrink-0" />}
+              </div>
+              {schedRows.map((row, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    value={row.city}
+                    onChange={(e) =>
+                      setSchedRows((rows) => rows.map((r, ri) => (ri === i ? { ...r, city: e.target.value } : r)))
+                    }
+                    placeholder={i === 0 ? 'e.g. Junagadh' : 'Another city…'}
+                    className="glass-inset min-w-0 flex-1 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:border-amber-300/50 focus:outline-none"
+                  />
                   <input
                     type="date"
-                    value={schedDate}
-                    onChange={(e) => setSchedDate(e.target.value)}
-                    className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white focus:border-amber-300/50 focus:outline-none"
+                    value={row.date}
+                    onChange={(e) =>
+                      setSchedRows((rows) => rows.map((r, ri) => (ri === i ? { ...r, date: e.target.value } : r)))
+                    }
+                    className="glass-inset w-[37%] shrink-0 rounded-xl p-3 text-xs text-white focus:border-amber-300/50 focus:outline-none"
                   />
+                  {schedRows.length > 1 && (
+                    <button
+                      onClick={() => setSchedRows((rows) => rows.filter((_, ri) => ri !== i))}
+                      className="shrink-0 rounded-lg border border-white/10 bg-white/5 p-2 text-slate-500 transition active:scale-95 hover:text-rose-300"
+                      title="Remove this city"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-2">
+                {schedRows.length < 8 ? (
+                  <button
+                    onClick={() =>
+                      setSchedRows((rows) => [
+                        ...rows,
+                        { city: '', date: rows[rows.length - 1]?.date || localYmd(Date.now()) }
+                      ])
+                    }
+                    className="rounded-full border border-dashed border-emerald-300/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 transition active:scale-95"
+                  >
+                    + Add City
+                  </button>
+                ) : (
+                  <div className="text-[9.5px] font-bold uppercase tracking-wide text-slate-600">Max 8 cities at a time</div>
+                )}
+                <div className="text-right text-[9.5px] leading-snug text-slate-600">
+                  Each city has its own date — commas work too.
                 </div>
               </div>
               <button
