@@ -489,7 +489,7 @@ public class LocationTrackService extends Service {
                 public void onTrigger(TriggerEvent event) {
                     // trigger fire hone par auto-cancel hota hai — PEHLE re-arm
                     try {
-                        sm.requestTriggerEvent(this, sigMotion);
+                        sm.requestTriggerSensor(this, sigMotion);
                     } catch (Exception ignore) {
                     }
                     try {
@@ -507,14 +507,14 @@ public class LocationTrackService extends Service {
                     }
                 }
             };
-            sm.requestTriggerEvent(trigListener, sigMotion);
+            sm.requestTriggerSensor(trigListener, sigMotion);
         } catch (Exception ignore) {
         }
     }
 
     private void disarmMotionSensor() {
         try {
-            if (sm != null && trigListener != null) sm.cancelTriggerEvent(trigListener);
+            if (sm != null && trigListener != null) sm.cancelTriggerSensor(trigListener, sigMotion);
         } catch (Exception ignore) {
         }
         trigListener = null;
