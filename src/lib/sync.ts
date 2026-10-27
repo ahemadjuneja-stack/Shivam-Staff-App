@@ -180,5 +180,14 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     window.setTimeout(() => { flushOutbox().catch(() => {}); }, 2500); // radio settle de do
   });
-  window.setInterval(() => { flushOutbox().catch(() => {}); }, 90 * 1000);
+  window.setInterval(() => {
+    // BATTERY SAVER: app hidden = 90s flush skip (radio wakeup 0) — journal
+    // entries localStorage (L2) me safe; wapas foreground aate hi flush.
+    if (document.hidden) return;
+    flushOutbox().catch(() => {});
+  }, 90 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    // BATTERY SAVER resume: visible = 900ms me outbox reconcile (dashboard jaisa)
+    if (!document.hidden) window.setTimeout(() => { flushOutbox().catch(() => {}); }, 900);
+  });
 }

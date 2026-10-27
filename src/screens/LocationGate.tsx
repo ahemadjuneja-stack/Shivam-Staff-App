@@ -306,7 +306,10 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   useEffect(() => {
     if (!gated) return;
     const iv = window.setInterval(() => {
-      if (!mounted.current) return;
+      // BATTERY SAVER: app hidden = probe skip (GPS radio wakeup 0) — wapas
+      // foreground aate hi agli cycle me probe resume (visibility handler
+      // 300ms ka fresh probe bhi deta hai). Foreground behavior SAME.
+      if (!mounted.current || document.hidden) return;
       // STALE PROBE GUARD (GPS toggle bug fix): probe 26s+ se 'in-flight'
       // atka ho (WebView callbacks hang) to force-reset — warna recovery
       // hamesha ke liye band ho jati thi aur 'No GPS Signal' screen stick
@@ -432,7 +435,11 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   useEffect(() => {
     if (!gated) return;
     const iv = window.setInterval(() => {
-      if (!mounted.current) return;
+      // BATTERY SAVER: hidden me watch/probe band hote hai — lastFixAt stale
+      // dikhega, par ye FALSE 'gps-off-live' lock + galti ka duty-off punch
+      // ROKTA hai (state change hidden me nahi hota). Visible handler
+      // lastFixAt turant fresh karta hai — 30s grace pehle jaise.
+      if (!mounted.current || document.hidden) return;
       if (
         lastFixAtRef.current > 0 &&
         Date.now() - lastFixAtRef.current >= 30000
@@ -452,11 +459,33 @@ export default function LocationGate({ profile, children }: LocationGateProps) {
   useEffect(() => {
     if (!gated) return;
     const onVis = () => {
-      if (document.visibilityState === 'visible' && mounted.current) {
+      if (!mounted.current) return;
+      if (document.visibilityState === 'visible') {
+        // BACKGROUND SLEEP RESUME: wapas foreground = 30s fresh grace + turant
+        // fresh-fix probe (300ms) + GPS watch restart (pass/far state me).
+        // Foreground behavior BILKUL pehle jaise — koi business change nahi.
         lastFixAtRef.current = Date.now();
+        const k = stateKindRef.current;
+        if (
+          watchIdRef.current === null &&
+          centerRef.current &&
+          (k === 'pass' || k === 'far')
+        ) {
+          startLiveWatch(centerRef.current);
+        }
         window.setTimeout(() => {
           if (mounted.current) runProbe();
         }, 300);
+      } else {
+        // BATTERY SAVER (Boss order 2026-10-27: 'Application phone me battery
+        // drain kar raha hai'): app HIDDEN = WebView ka watchPosition GPS
+        // BAND. Pehle hidden me bhi GPS stream chalta rehta tha (Firestore WS
+        // process zinda rakhta hai — Android timers throttle nahi karte) —
+        // sales pe native LocationTrackService ke upar DOUBLE GPS = drain.
+        // Background monitoring native layers (PROVIDERS_CHANGED broadcast +
+        // LocationTrackService) khud karti hai — JS watch ka zero kaam.
+        // Radius re-check + gate recovery wapas aate hi 300ms probe karta hai.
+        stopWatch();
       }
     };
     document.addEventListener('visibilitychange', onVis);

@@ -192,9 +192,16 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // ---------- Device & location reporting (dashboard StaffDetail ke liye — silent, no UI) ----------
   useEffect(() => {
     reportDeviceAndLocation(profile.uid);
-    const t = window.setInterval(() => reportDeviceAndLocation(profile.uid), 5 * 60 * 1000);
+    const t = window.setInterval(() => {
+      // BATTERY SAVER: sales hidden me JS report skip — native LocationTrack-
+      // Service har fix par users.lastLocation+lastSeenAt likhta hai (better
+      // data, src:'svc') — JS ka 5-min GPS burst hidden me redundant tha.
+      // Worker ka 5-min report pehle jaise chalta hai (wahi uska source hai).
+      if (profile.role === 'sales' && document.hidden) return;
+      reportDeviceAndLocation(profile.uid);
+    }, 5 * 60 * 1000);
     return () => window.clearInterval(t);
-  }, [profile.uid]);
+  }, [profile.uid, profile.role]);
 
   // ---------- Duty state ----------
   const [isOnDuty, setIsOnDuty] = useState<boolean>(false);
@@ -302,7 +309,9 @@ export default function Home({ profile, onLogout }: HomeProps) {
   // ---------- Live tick: ON duty span har 30s me badhe ----------
   useEffect(() => {
     if (!isOnDuty) return;
-    const t = setInterval(() => setTick((x) => x + 1), 30000);
+    // BATTERY SAVER: hidden me UI tick skip (re-render 0) — wapas visible
+    // aate hi agli tick (30s) me clock sahi ho jata hai.
+    const t = setInterval(() => { if (!document.hidden) setTick((x) => x + 1); }, 30000);
     return () => clearInterval(t);
   }, [isOnDuty]);
 

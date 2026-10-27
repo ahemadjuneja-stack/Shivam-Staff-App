@@ -83,7 +83,9 @@ export default function DutyTimeSection({ profile, punches, isOnDuty }: DutyTime
   // --- live tick: ON duty me chalu span har 30s me badhega ---
   useEffect(() => {
     if (!isOnDuty) return;
-    const t = setInterval(() => setTick((x) => x + 1), 30000);
+    // BATTERY SAVER: hidden me UI tick skip (re-render 0) — wapas visible
+    // aate hi clock sahi ho jata hai.
+    const t = setInterval(() => { if (!document.hidden) setTick((x) => x + 1); }, 30000);
     return () => clearInterval(t);
   }, [isOnDuty]);
 

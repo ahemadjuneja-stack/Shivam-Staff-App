@@ -21,11 +21,13 @@
   .animate-text-shine {
     background: linear-gradient(90deg, #1e293b 0%, #334155 30%, #ffffff 50%, #334155 70%, #1e293b 100%);
     background-size: 200% auto;
+    background-position: 50% 50%;
     color: transparent;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-stroke: 0.6px rgba(255, 255, 255, 0.7);
-    animation: textShine 2s linear infinite;
+    /* BATTERY SAVER: infinite background-position repaint band — static bright
+       band wahi premium metal look (har-frame paint cost 0) */
     font-family: 'Aboreto', cursive, serif;
     font-weight: 700;
   }
@@ -107,11 +109,13 @@ body {
   }
 
   .shivam-silver-shine {
-    animation: silverShine 3s linear infinite;
+    /* BATTERY SAVER: shine sweep repaint band — static center-bright silver */
+    background-position: 50% center;
   }
 
   .shivam-silver-shine-slow {
-    animation: silverShine 7s linear infinite;
+    /* BATTERY SAVER: same static treatment */
+    background-position: 50% center;
   }
 
   @keyframes introRise {
@@ -185,7 +189,8 @@ body {
     50% { opacity: 0.95; transform: scale(1.06); }
   }
   .star-glow {
-    animation: starPulse 2.6s ease-in-out infinite;
+    /* BATTERY SAVER: pulse band — static soft glow */
+    opacity: 0.9;
   }
 
   /* SOON badge shimmer */
@@ -195,7 +200,8 @@ body {
     100% { opacity: 0.6; }
   }
   .soon-badge {
-    animation: soonShimmer 2s ease-in-out infinite;
+    /* BATTERY SAVER: shimmer band — static full badge */
+    opacity: 1;
   }
 
   /* Thin premium progress bar */
