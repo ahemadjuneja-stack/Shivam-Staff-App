@@ -71,6 +71,22 @@ interface HomeProps {
   onLogout: () => void;
 }
 
+// TASK TITLE COLORS (Boss order 2026-10-27: "task font color ko kuch alag
+// colors me likho take aasani se dikhe") — pehle sab pending task titles same
+// #7EB3FF blue me the (2 tasks ek jaise dikhte the), ab har card ka title
+// palette cycle se apna distinct color (adjacent cards hamesha alag hue,
+// sab dark navy bg par readable light tints).
+const TASK_TITLE_COLORS = [
+  '#7EB3FF', // sky blue
+  '#FCD34D', // amber
+  '#34D399', // emerald
+  '#F472B6', // pink
+  '#C4B5FD', // violet
+  '#67E8F9', // cyan
+  '#FDBA74', // orange
+  '#FCA5A5' // rose
+];
+
 // Fixed branch avatars (Boss: "Abhi fixed" — aage real branch data)
 const FIXED_BRANCHES = [
   { initials: 'ZS', city: 'Patan Gujarat' },
@@ -1418,8 +1434,9 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       ) : (
         <div className="relative z-10 space-y-2.5">
-          {pendingTasks.map((t) => {
+          {pendingTasks.map((t, i) => {
             const canTap = isManager;
+            const titleColor = TASK_TITLE_COLORS[i % TASK_TITLE_COLORS.length];
             return (
               <button
                 key={t.id}
@@ -1427,9 +1444,9 @@ export default function Home({ profile, onLogout }: HomeProps) {
                 disabled={!canTap}
                 className="glass-card relative w-full overflow-hidden rounded-[20px] px-4 py-3.5 text-left transition active:scale-[0.985]"
               >
-                <span className="absolute inset-y-0 left-0 w-[3.5px] bg-gradient-to-b from-sky-400 to-indigo-500" />
+                <span className="absolute inset-y-0 left-0 w-[3.5px]" style={{ background: `linear-gradient(to bottom, ${titleColor}, ${titleColor}44)` }} />
                 <div className="flex items-start justify-between gap-2.5 pl-2">
-                  <div className="text-[15.5px] font-semibold leading-snug text-[#7EB3FF]">{t.title}</div>
+                  <div className="text-[15.5px] font-semibold leading-snug" style={{ color: titleColor }}>{t.title}</div>
                   <span className="shrink-0 rounded-full border border-amber-300/25 bg-amber-400/10 px-2.5 py-1 text-[9px] font-extrabold tracking-[0.12em] text-amber-300">
                     PENDING
                   </span>
