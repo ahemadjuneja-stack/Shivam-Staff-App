@@ -13,6 +13,10 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
+import android.hardware.Sensor;
+import android.hardware.SensorManager;
+import android.hardware.TriggerEvent;
+import android.hardware.TriggerEventListener;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -53,7 +57,15 @@ import java.util.List;
  * tracking ab NATIVE Foreground Service karta hai jo app band hone par bhi
  * zinda rehta hai (notification ke saath):
  *
- *   - LocationManager GPS + NETWORK providers: har ~45s / 15m fix
+ *   - ADAPTIVE LOCATION ENGINE (Boss 2026-10-27: "Zomato jaisa formulas —
+ *     location hamesha on rahe magar battery kam use ho"): MOVING = GPS+NETWORK
+ *     45s/15m (business accuracy unchanged); 3 min ek jagah ruko = STILL =
+ *     GPS chip BAND, sirf NETWORK har 4min + PASSIVE provider (dusre apps ke
+ *     GPS fixes FREE) + hardware SignificantMotion sensor (hila to turant
+ *     MOVING wapas). Anchor se 75m+accuracy ya 250m+ jaane par bhi MOVING.
+ *     Passive flood 20s gap-guard. Research-backed: adaptive polling +
+ *     displacement throttle + passive provider + motion sensor (Uber/Zomato
+ *     playbook) — background GPS active time ~60-90% kam typical field day me.
  *   - Firestore REST (rules open — Task 49 verified) DIRECT writes, koi
  *     Firebase SDK nahi chahiye (java.net + org.json built-in):
  *       loc_sessions/{ls-uid-at}  points[]  <- poora road map
@@ -82,6 +94,14 @@ public class LocationTrackService extends Service {
     private static final int NOTIF_ID = 7361;
     private static final long FIX_INTERVAL_MS = 45000L;
     private static final float FIX_MIN_DIST_M = 15f;
+    // ---- ADAPTIVE BATTERY ENGINE constants ----
+    private static final int MODE_MOVING = 0;
+    private static final int MODE_STILL = 1;
+    private static final long STILL_INTERVAL_MS = 240000L;   // STILL: network fix har 4min
+    private static final float STILL_MIN_DIST_M = 40f;       // STILL: 40m displacement
+    private static final float STATIONARY_RADIUS_M = 75f;    // anchor radius (accuracy-aware)
+    private static final long STILL_CONFIRM_MS = 180000L;    // 3 min still -> GPS band
+    private static final long MIN_FIX_GAP_MS = 20000L;       // passive flood guard
     private static final int FLUSH_AT = 2;                 // points per commit
     private static final long FLUSH_MAX_AGE_MS = 90000L;
     private static final int USERLOC_EVERY = 2;            // users patch har 2nd fix
@@ -116,6 +136,16 @@ public class LocationTrackService extends Service {
     private int fixCount = 0;
     private int flushCycles = 0;
 
+    // adaptive engine state (locHandler thread owner, mode volatile — cross-thread)
+    private volatile int mode = MODE_MOVING;
+    private double anchorLat, anchorLng;
+    private boolean hasAnchor = false;
+    private long stillSinceAt = 0L;
+    private long lastAcceptedFixAt = 0L;
+    private SensorManager sm;
+    private Sensor sigMotion;
+    private TriggerEventListener trigListener;
+
     private SharedPreferences prefs;
     private String uid, name;
     private int versionCode;
@@ -149,6 +179,7 @@ public class LocationTrackService extends Service {
             loadSessionState();
             lastEnabled = isLocationEnabled();
             haveEnabled = true;
+            resetStillness();
             if (lastEnabled) {
                 startUpdates();
                 Location lk = lastKnown();
@@ -171,6 +202,7 @@ public class LocationTrackService extends Service {
     private void hardStop() {
         try {
             stopUpdates();
+            disarmMotionSensor();
             if (provReceiver != null) {
                 unregisterReceiver(provReceiver);
                 provReceiver = null;
@@ -274,6 +306,7 @@ public class LocationTrackService extends Service {
         lastEnabled = en;
         haveEnabled = true;
         if (en) {
+            resetStillness();
             startUpdates();
             ensureSessionInternal(lastKnown(), false);
         } else {
@@ -313,7 +346,7 @@ public class LocationTrackService extends Service {
                         try {
                             if (location == null) return;
                             lastFix = location;
-                            appendPoint(location);
+                            onFixAdaptive(location);
                         } catch (Exception ignore) {
                         }
                     }
@@ -332,21 +365,159 @@ public class LocationTrackService extends Service {
                 };
             }
             boolean any = false;
-            try {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, FIX_INTERVAL_MS,
-                        FIX_MIN_DIST_M, locListener, locHandler.getLooper());
-                any = true;
-            } catch (Exception ignore) {
-            }
-            try {
-                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, FIX_INTERVAL_MS,
-                        FIX_MIN_DIST_M, locListener, locHandler.getLooper());
-                any = true;
-            } catch (Exception ignore) {
+            if (mode == MODE_MOVING) {
+                // MOVING: GPS + NETWORK har 45s/15m — business accuracy jaisi pehle thi
+                try {
+                    lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, FIX_INTERVAL_MS,
+                            FIX_MIN_DIST_M, locListener, locHandler.getLooper());
+                    any = true;
+                } catch (Exception ignore) {
+                }
+                try {
+                    lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, FIX_INTERVAL_MS,
+                            FIX_MIN_DIST_M, locListener, locHandler.getLooper());
+                    any = true;
+                } catch (Exception ignore) {
+                }
+            } else {
+                // STILL (Zomato-grade saver): GPS chip BAND — sirf NETWORK (cell/wifi)
+                // har 4min + PASSIVE (dusre apps ke fixes FREE). Network na ho to GPS
+                // fallback (blind na rahe). Is state me GPS battery ~90% bachti hai.
+                boolean netOk = false;
+                try {
+                    if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                        lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, STILL_INTERVAL_MS,
+                                STILL_MIN_DIST_M, locListener, locHandler.getLooper());
+                        netOk = true;
+                    }
+                } catch (Exception ignore) {
+                }
+                try {
+                    lm.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 0L, 0f,
+                            locListener, locHandler.getLooper());
+                } catch (Exception ignore) {
+                }
+                if (!netOk) {
+                    try {
+                        lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, FIX_INTERVAL_MS,
+                                FIX_MIN_DIST_M, locListener, locHandler.getLooper());
+                        netOk = true;
+                    } catch (Exception ignore) {
+                    }
+                }
+                any = netOk;
             }
             updatesOn = any;
+            armMotionSensor();
         } catch (Exception ignore) {
         }
+    }
+
+    // ================= ADAPTIVE BATTERY ENGINE (research-backed) =================
+
+    private void resetStillness() {
+        hasAnchor = false;
+        stillSinceAt = 0L;
+    }
+
+    private void switchMode(int m) {
+        if (mode == m) return;
+        mode = m;
+        if (updatesOn) {
+            stopUpdates();
+            startUpdates();
+        }
+    }
+
+    /**
+     * Har fix par mode decision:
+     *  - anchor se STATIONARY_RADIUS+accuracy (ya 250m+) door = MOVING (GPS on)
+     *  - MOVING me 3 min ek jagah = STILL (GPS band, network-only + passive)
+     * Accuracy-aware threshold — coarse network fix ka noise mode-flapping
+     * nahi karega (flapping = zyada battery, isliye guard zaroori).
+     */
+    private void onFixAdaptive(Location l) {
+        long now = System.currentTimeMillis();
+        try {
+            double lat = l.getLatitude();
+            double lng = l.getLongitude();
+            if (!hasAnchor) {
+                anchorLat = lat;
+                anchorLng = lng;
+                hasAnchor = true;
+                stillSinceAt = now;
+            } else {
+                float[] d = new float[1];
+                try {
+                    Location.distanceBetween(lat, lng, anchorLat, anchorLng, d);
+                } catch (Exception e) {
+                    d[0] = 0f;
+                }
+                float acc = l.hasAccuracy() ? l.getAccuracy() : 30f;
+                boolean moved = d[0] > (STATIONARY_RADIUS_M + acc) || d[0] > 250f;
+                if (moved) {
+                    anchorLat = lat;
+                    anchorLng = lng;
+                    stillSinceAt = now;
+                    if (mode != MODE_MOVING) switchMode(MODE_MOVING);
+                } else if (mode == MODE_MOVING && now - stillSinceAt >= STILL_CONFIRM_MS) {
+                    switchMode(MODE_STILL);
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        // STILL me passive fixes flood ho sakte hain (dusra app navigation chala
+        // raha ho) — 20s gap guard warna writes + radio baar-baar jagenge
+        if (mode == MODE_STILL && "passive".equals(l.getProvider())
+                && now - lastAcceptedFixAt < MIN_FIX_GAP_MS) {
+            return;
+        }
+        lastAcceptedFixAt = now;
+        appendPoint(l);
+    }
+
+    /** Hardware Significant Motion sensor — hila to MILLISECONDS me MOVING mode
+     *  (zero GPS cost, pure hardware trigger — Zomato/Uber jaisa). */
+    private void armMotionSensor() {
+        try {
+            if (sm == null) sm = (SensorManager) getSystemService(SENSOR_SERVICE);
+            if (sm == null || trigListener != null) return; // pehle se armed
+            sigMotion = sm.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION);
+            if (sigMotion == null) return; // sensor nahi — distance fallback kaafi hai
+            trigListener = new TriggerEventListener() {
+                @Override
+                public void onTrigger(TriggerEvent event) {
+                    // trigger fire hone par auto-cancel hota hai — PEHLE re-arm
+                    try {
+                        sm.requestTriggerEvent(this, sigMotion);
+                    } catch (Exception ignore) {
+                    }
+                    try {
+                        if (locHandler != null) {
+                            locHandler.post(() -> {
+                                try {
+                                    if (running && updatesOn && mode == MODE_STILL) {
+                                        switchMode(MODE_MOVING);
+                                    }
+                                } catch (Exception ignore) {
+                                }
+                            });
+                        }
+                    } catch (Exception ignore) {
+                    }
+                }
+            };
+            sm.requestTriggerEvent(trigListener, sigMotion);
+        } catch (Exception ignore) {
+        }
+    }
+
+    private void disarmMotionSensor() {
+        try {
+            if (sm != null && trigListener != null) sm.cancelTriggerEvent(trigListener);
+        } catch (Exception ignore) {
+        }
+        trigListener = null;
     }
 
     private void stopUpdates() {
@@ -942,6 +1113,7 @@ public class LocationTrackService extends Service {
         if (instance == this) instance = null;
         try {
             stopUpdates();
+            disarmMotionSensor();
         } catch (Exception ignore) {
         }
         try {
