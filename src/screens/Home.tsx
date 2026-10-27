@@ -38,12 +38,14 @@ import {
   markAutoCloseDone,
   MAX_SHIFT_MS
 } from '../lib/integrity';
-import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock, Pin } from 'lucide-react';
+import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock, Pin, Truck } from 'lucide-react';
 import { computeStaffRows, fmtAgo, CityCoord, DutyUserMeta } from '../lib/onDuty';
 import StaffDetailScreen, { StaffDetailTarget } from './StaffDetail';
 import { consumeAutoDutyRequest, consumeAutoDutyOffRequest } from './LocationGate';
 import TaskVerifyModal from '../components/TaskVerifyModal';
 import { verifyTask } from '../lib/taskVerify';
+import TourHisabScreen from './TourHisab';
+import { TourLite, tourLiteOf } from '../lib/tourHisab';
 
 // ============================================================
 // NEW HOME SCREEN (Boss order 2026-10-25 — demo screenshot style)
@@ -946,6 +948,30 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return () => unsub();
   }, [isSales, profile.uid]);
 
+  // ---------- TOUR HISAB (Boss order 2026-10-28 — SALES): dashboard se
+  // paste kiye gaye tours — Line Schedule ke niche boxes (niche tour ka
+  // naam), tap -> TourHisab screen (cities -> shops -> GR/Less/paisa-diya
+  // + JAMA). Dashboard par salesman ka hisab LIVE dikhta hai.
+  const [toursList, setToursList] = useState<TourLite[]>([]);
+  const [tourHisabTour, setTourHisabTour] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isSales || !profile.uid) return;
+    const unsub = onSnapshot(
+      collection(db, 'tours'),
+      (snap) => {
+        const list: TourLite[] = [];
+        snap.forEach((d) => {
+          const t = tourLiteOf(d.id, d.data() as Record<string, unknown>);
+          if (t) list.push(t);
+        });
+        list.sort((a, b) => b.createdAt - a.createdAt);
+        setToursList(list);
+      },
+      () => {}
+    );
+    return () => unsub();
+  }, [isSales, profile.uid]);
+
   const addScheduleRow = async () => {
     if (savingSched) return;
     if (schedRows.some((r) => !r.date)) {
@@ -1395,6 +1421,43 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       )}
 
+      {/* TOUR HISAB BOXES (Boss order 2026-10-28 — SALES): dashboard se
+          paste kiya hua tour — box ke niche tour ka naam (jaise Porbandar);
+          tap -> new screen: cities -> shops -> hisab (GR/Less/paisa diya) + JAMA */}
+      {isSales && toursList.length > 0 && (
+        <div className="relative z-10 mt-6">
+          <div className="mb-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-[17px] font-semibold text-[#B7C5F0]">Tour Hisab</h2>
+              <span className="rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-extrabold text-cyan-300">
+                {toursList.length}
+              </span>
+            </div>
+          </div>
+          <div className="space-y-2.5">
+            {toursList.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTourHisabTour(t.id)}
+                className="glass-card intro-rise flex w-full items-center gap-3.5 rounded-[20px] px-4 py-4 text-left transition active:scale-[0.99]"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-cyan-300/25 bg-gradient-to-br from-cyan-400/25 to-teal-500/15">
+                  <Truck className="h-5 w-5 text-cyan-300" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[9.5px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Tour Hisab Box</span>
+                  <span className="block truncate text-[15px] font-extrabold text-white">{t.name}</span>
+                  <span className="mt-0.5 block text-[11px] font-semibold text-slate-400">
+                    {t.cities.length} cities · {t.shopCount} shops{t.date ? ` · ${t.date}` : ''}
+                  </span>
+                </span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* DUTY STRIP — glass overview (worker only, same 2 rows jaisa demo) */}
       {profile.role === 'worker' && (
         <div className="glass-card intro-rise intro-rise-delay relative z-10 mt-3 rounded-[26px] px-4 py-4">
@@ -1809,6 +1872,17 @@ export default function Home({ profile, onLogout }: HomeProps) {
           pinned={pinnedUids.includes(detailTarget.uid)}
           onTogglePin={() => togglePin(detailTarget.uid)}
           onBack={() => setDetailTarget(null)}
+        />
+      )}
+
+      {/* TOUR HISAB SCREEN (Boss 2026-10-28): tour box tap -> slide screen —
+          cities -> shops -> GR/Less/paisa-diya hisab + JAMA (kaha jama kiya).
+          Dashboard Tour Hisab tab par ye sab LIVE dikhta hai. Slide se band. */}
+      {tourHisabTour && (
+        <TourHisabScreen
+          profile={profile}
+          tourId={tourHisabTour}
+          onBack={() => setTourHisabTour(null)}
         />
       )}
 
