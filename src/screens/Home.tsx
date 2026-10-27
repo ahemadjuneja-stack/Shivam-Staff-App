@@ -38,7 +38,8 @@ import {
   markAutoCloseDone,
   MAX_SHIFT_MS
 } from '../lib/integrity';
-import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X } from 'lucide-react';
+import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock } from 'lucide-react';
+import { computeOnDutyRows, fmtAgo, CityCoord, DutyUserMeta } from '../lib/onDuty';
 import { consumeAutoDutyRequest, consumeAutoDutyOffRequest } from './LocationGate';
 import TaskVerifyModal from '../components/TaskVerifyModal';
 import { verifyTask } from '../lib/taskVerify';
@@ -360,6 +361,79 @@ export default function Home({ profile, onLogout }: HomeProps) {
       })
       .catch(() => {});
   }, [isManager]);
+
+  // ---------- MANAGER ON-DUTY LIVE BOARD (Boss order 2026-10-28) ----------
+  // FIXED_BRANCHES white box ke NICHE live list: duty par sabhi staff —
+  // DP + naam + current location + GREEN TICK (location ON & fresh).
+  // 100% READ-ONLY: users + staff_attendance + line_schedule ke listeners —
+  // salesman-side me ZERO change, battery ZERO impact (native engine v76
+  // waise hi likhta rahega: users.lastLocation/lastSeenAt + isOnDuty).
+  // GREEN = lastSeenAt 12-min window me (STILL mode users-patch max gap
+  // 8min + jitter); stale = AMBER clock (duty on par update nahi aa rahi).
+  const [dutyUserMap, setDutyUserMap] = useState<Record<string, DutyUserMeta>>({});
+  const [dutyOnUids, setDutyOnUids] = useState<Record<string, string>>({});
+  const [onDutyCities, setOnDutyCities] = useState<CityCoord[]>([]);
+  const [odTick, setOdTick] = useState(0);
+  useEffect(() => {
+    if (!isManager) return;
+    const unsubs: Array<() => void> = [];
+    // (1) users (active) — naam/DP/role/lastLocation/lastSeenAt live
+    unsubs.push(
+      onSnapshot(query(collection(db, 'users'), where('status', '==', 'active')), (snap) => {
+        const m: Record<string, DutyUserMeta> = {};
+        snap.forEach((d) => {
+          const v = d.data() as any;
+          const r = String(v.role || '');
+          if (r !== 'worker' && r !== 'sales') return;
+          m[d.id] = {
+            uid: d.id,
+            name: String(v.name || ''),
+            role: r as 'worker' | 'sales',
+            photo: typeof v.photo === 'string' && v.photo ? v.photo : undefined,
+            city: typeof v.city === 'string' ? v.city : undefined,
+            lastLocation:
+              v.lastLocation && Number.isFinite(v.lastLocation.lat) && Number.isFinite(v.lastLocation.lng)
+                ? v.lastLocation
+                : undefined,
+            lastSeenAt: Number(v.lastSeenAt) || undefined
+          };
+        });
+        setDutyUserMap(m);
+      }, () => {})
+    );
+    // (2) staff_attendance where isOnDuty==true — duty par kaun
+    //     (sales: native auto location=ON/duty=ON; worker: manual toggle)
+    unsubs.push(
+      onSnapshot(query(collection(db, 'staff_attendance'), where('isOnDuty', '==', true)), (snap) => {
+        const m: Record<string, string> = {};
+        snap.forEach((d) => { m[d.id] = String((d.data() as any).name || ''); });
+        setDutyOnUids(m);
+      }, () => {})
+    );
+    // (3) line_schedule is month — city coords (nearest-city label ke liye)
+    unsubs.push(
+      onSnapshot(query(collection(db, 'line_schedule'), where('month', '==', monthKeyOf(new Date()))), (snap) => {
+        const byKey: Record<string, CityCoord> = {};
+        snap.forEach((d) => {
+          const v = d.data() as any;
+          const lat = Number(v.cityLat);
+          const lng = Number(v.cityLng);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+          const key = String(v.cityKey || cityKeyOf(String(v.city || '')));
+          if (!key || byKey[key]) return;
+          byKey[key] = { key, city: String(v.city || ''), lat, lng };
+        });
+        setOnDutyCities(Object.values(byKey));
+      }, () => {})
+    );
+    // (4) 30s tick — staleness/ago labels fresh re-render
+    const t = window.setInterval(() => setOdTick((x) => x + 1), 30 * 1000);
+    return () => { unsubs.forEach((u) => u()); window.clearInterval(t); };
+  }, [isManager]);
+  const onDutyRows = useMemo(
+    () => computeOnDutyRows(Object.values(dutyUserMap), dutyOnUids, onDutyCities, Date.now(), profile.uid),
+    [dutyUserMap, dutyOnUids, onDutyCities, profile.uid, odTick]
+  );
 
   // ---------- DP MAP (Boss order 2026-10-27: task cards me naam ke saath photo) ----------
   // staffList (manager) + apna photo turant; baki uids (worker ka manager, etc.)
@@ -1528,6 +1602,73 @@ export default function Home({ profile, onLogout }: HomeProps) {
             </div>
           ))}
           <ChevronRight className="ml-auto h-6 w-6 self-center text-[#4C9EFF]" />
+        </div>
+      )}
+
+      {/* ON-DUTY LIVE BOARD (Boss order 2026-10-28): white box ke NICHE — duty par
+          sabhi staff: DP + naam + location + GREEN TICK (location ON & fresh).
+          Sirf manager ko dikhta hai (Task 84 gate wahi). READ-ONLY — koi write
+          nahi, salesman app me kuch nahi badla, battery ZERO impact. */}
+      {isManager && (
+        <div className="relative z-10 mt-4">
+          <div className="glass-card rounded-2xl p-4">
+            <div className="mb-1 flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-emerald-300" />
+              <span className="text-[12px] font-extrabold tracking-[0.14em] text-slate-300">ON DUTY — LIVE</span>
+              <span className="rounded-full border border-white/10 bg-[#101B31] px-2 py-px text-[10px] font-bold text-slate-300">
+                {onDutyRows.length}
+              </span>
+              <span className="relative ml-auto flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              </span>
+            </div>
+            {onDutyRows.length === 0 ? (
+              <p className="py-3 text-[12.5px] text-slate-500">
+                Koi staff duty par nahi hai — location/duty ON hote hi live dikhega.
+              </p>
+            ) : (
+              <div className="divide-y divide-white/[0.05]">
+                {onDutyRows.map((r) => (
+                  <div key={r.uid} className="flex items-center gap-3 py-2.5">
+                    <div
+                      className="shrink-0 rounded-full"
+                      style={r.fresh ? { boxShadow: '0 0 0 2px rgba(52,211,153,0.55)' } : undefined}
+                    >
+                      <Avatar photo={r.photo} name={r.name} size={38} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-[14px] font-bold text-slate-100">{r.name}</span>
+                        <span
+                          className={`rounded px-1 py-px text-[8px] font-extrabold tracking-wider ${
+                            r.role === 'sales' ? 'bg-amber-400/15 text-amber-300' : 'bg-sky-400/15 text-sky-300'
+                          }`}
+                        >
+                          {r.role === 'sales' ? 'SALES' : 'STAFF'}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-1 text-[11.5px] text-slate-400">
+                        <MapPin className={`h-3 w-3 shrink-0 ${r.fresh ? 'text-emerald-300' : 'text-slate-500'}`} />
+                        <span className="truncate">{r.label}</span>
+                        {r.lastAt > 0 && (
+                          <span className="shrink-0 text-slate-500">· {fmtAgo(r.lastAt, Date.now())}</span>
+                        )}
+                      </div>
+                    </div>
+                    {r.fresh ? (
+                      <CheckCircle2
+                        className="h-6 w-6 shrink-0 text-emerald-400"
+                        style={{ fill: 'rgba(52,211,153,0.16)' }}
+                      />
+                    ) : (
+                      <Clock className="h-5 w-5 shrink-0 text-amber-400/80" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
