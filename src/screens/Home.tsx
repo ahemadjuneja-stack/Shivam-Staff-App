@@ -1174,107 +1174,103 @@ export default function Home({ profile, onLogout }: HomeProps) {
               </div>
             </div>
           ) : (
-            <div className="space-y-2">
-              {scheduleRows.map((row) => {
-                const isToday = row.date === localYmd(Date.now());
-                const dayNum = Number(row.date.slice(8, 10));
-                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                const monthShort = monthNames[Math.max(0, Math.min(11, Number(row.date.slice(5, 7)) - 1))];
-                const dt = new Date(Number(row.date.slice(0, 4)), Number(row.date.slice(5, 7)) - 1, dayNum);
-                const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getDay()];
-                return (
-                  <div key={row.id} className={`glass-card rounded-[18px] px-4 py-3 ${isToday ? 'ring-1 ring-amber-300/40' : ''}`}>
-                    {editSchedId === row.id ? (
-                      <div className="space-y-3">
-                        {/* Boss rule: City LEFT, Date RIGHT (edit form bhi same) */}
-                        <div className="grid grid-cols-2 gap-2.5">
-                          <div>
-                            <label className="sec-label">City</label>
+            /* BOSS order 2026-10-27: "City strip ko slim karo — space kam use ho
+               aur hum aur function add kar sake; strip EK box me dikhao, us box
+               me scroll karke dusri city dikhni chahiye" — saare cities ab EK hi
+               compact glass box me slim rows (40px) ki tarah, zyada entries par
+               box ke andar scroll (page lamba nahi hota, niche ke functions ke
+               liye jagah bachti hai). */
+            <div className="glass-card overflow-hidden rounded-[18px]">
+              <div className="max-h-[164px] overflow-y-auto overscroll-contain">
+                {scheduleRows.map((row) => {
+                  const isToday = row.date === localYmd(Date.now());
+                  const dayNum = Number(row.date.slice(8, 10));
+                  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                  const monthShort = monthNames[Math.max(0, Math.min(11, Number(row.date.slice(5, 7)) - 1))];
+                  const dt = new Date(Number(row.date.slice(0, 4)), Number(row.date.slice(5, 7)) - 1, dayNum);
+                  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getDay()];
+                  return (
+                    <div
+                      key={row.id}
+                      className={`border-b border-white/5 px-3 py-2.5 last:border-b-0 ${isToday ? 'bg-amber-400/[0.06]' : ''}`}
+                    >
+                      {editSchedId === row.id ? (
+                        <div className="space-y-2">
+                          {/* edit mode — sirf ye row expand hoti hai (City LEFT, Date RIGHT) */}
+                          <div className="grid grid-cols-2 gap-2">
                             <input
                               value={editSchedCity}
                               onChange={(e) => setEditSchedCity(e.target.value)}
                               placeholder="City"
-                              className="glass-inset mt-1.5 w-full rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none"
+                              className="glass-inset w-full rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none"
                             />
-                          </div>
-                          <div>
-                            <label className="sec-label">Date</label>
                             <input
                               type="date"
                               value={editSchedDate}
                               onChange={(e) => setEditSchedDate(e.target.value)}
-                              className="glass-inset mt-1.5 w-full rounded-xl p-2.5 text-xs text-white focus:outline-none"
+                              className="glass-inset w-full rounded-xl p-2.5 text-xs text-white focus:outline-none"
                             />
                           </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={saveSchedEdit}
-                            disabled={savingSched}
-                            className="flex-1 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 py-2.5 text-[11px] font-extrabold text-slate-950 disabled:opacity-50 transition active:scale-95"
-                          >
-                            {savingSched ? 'Saving...' : 'Save Changes'}
-                          </button>
-                          <button
-                            onClick={() => setEditSchedId(null)}
-                            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[11px] font-bold text-slate-300 transition active:scale-95"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-2">
-                        {/* Boss rule: City LEFT (leading) aur Date RIGHT — date badge
-                            ab right side hai, city pehla element */}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 text-[14.5px] font-bold text-slate-100">
-                            <MapPin className="h-3.5 w-3.5 shrink-0 text-emerald-300/80" />
-                            <span className="truncate">{row.city}</span>
-                          </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                            {isToday && (
-                              <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-wide text-amber-300">
-                                TODAY
-                              </span>
-                            )}
-                            {row.source === 'dashboard' && (
-                              <span className="rounded-full border border-sky-300/20 bg-sky-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-wide text-sky-300">
-                                FROM DASHBOARD
-                              </span>
-                            )}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={saveSchedEdit}
+                              disabled={savingSched}
+                              className="flex-1 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 py-2 text-[10.5px] font-extrabold text-slate-950 disabled:opacity-50 transition active:scale-95"
+                            >
+                              {savingSched ? 'Saving...' : 'Save Changes'}
+                            </button>
+                            <button
+                              onClick={() => setEditSchedId(null)}
+                              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-[10.5px] font-bold text-slate-300 transition active:scale-95"
+                            >
+                              Cancel
+                            </button>
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <div className="glass-inset shrink-0 rounded-lg px-2.5 py-1.5 text-center">
-                            <div className="text-[8.5px] font-bold uppercase tracking-wide text-slate-500">{monthShort}</div>
-                            <div className="text-[15px] font-black leading-none text-[#7EB3FF]">{dayNum}</div>
-                            <div className="mt-0.5 text-[8px] font-bold uppercase text-slate-600">{weekday}</div>
-                          </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-3 w-3 shrink-0 text-emerald-300/80" />
+                          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-100">{row.city}</span>
+                          {isToday && (
+                            <span className="shrink-0 rounded-full border border-amber-300/30 bg-amber-400/10 px-1.5 py-0.5 text-[7.5px] font-extrabold tracking-wide text-amber-300">
+                              TODAY
+                            </span>
+                          )}
+                          {row.source === 'dashboard' && (
+                            <span
+                              className="shrink-0 rounded-full border border-sky-300/20 bg-sky-400/10 px-1.5 py-0.5 text-[7.5px] font-extrabold tracking-wide text-sky-300"
+                              title="From dashboard"
+                            >
+                              DASH
+                            </span>
+                          )}
+                          <span className="shrink-0 whitespace-nowrap text-[10px] font-bold text-[#7EB3FF]">
+                            {dayNum} {monthShort} · {weekday}
+                          </span>
                           <button
                             onClick={() => {
                               setEditSchedId(row.id || null);
                               setEditSchedDate(row.date);
                               setEditSchedCity(row.city);
                             }}
-                            className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition active:scale-95 hover:text-slate-200"
+                            className="shrink-0 rounded-md border border-white/10 bg-white/5 p-1.5 text-slate-400 transition active:scale-95 hover:text-slate-200"
                             title="Edit date / city"
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            <Pencil className="h-3 w-3" />
                           </button>
                           <button
                             onClick={() => deleteSchedRow(row)}
-                            className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition active:scale-95 hover:text-rose-300"
+                            className="shrink-0 rounded-md border border-white/10 bg-white/5 p-1.5 text-slate-400 transition active:scale-95 hover:text-rose-300"
                             title="Remove"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Trash2 className="h-3 w-3" />
                           </button>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
