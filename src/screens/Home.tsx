@@ -22,7 +22,7 @@ import { logCreditHistory, txHistoryEntry, historyCol, localYmd } from '../lib/h
 import PointsGuide from './PointsGuide';
 import ProfileScreen from './Profile';
 import Avatar from '../components/Avatar';
-import { upsertScheduleEntry, removeScheduleEntry } from '../lib/schedule';
+import { upsertScheduleEntry, removeScheduleEntry, cityKeyOf } from '../lib/schedule';
 import { reportDeviceAndLocation } from '../lib/reporting';
 import { sampleGeofence, closeStaleOutsideEvent, lastGpsFix, SAMPLE_MS } from '../lib/geofence';
 import { enqueueOutbox, flushOutbox } from '../lib/sync';
@@ -38,7 +38,7 @@ import {
   markAutoCloseDone,
   MAX_SHIFT_MS
 } from '../lib/integrity';
-import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2 } from 'lucide-react';
+import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X } from 'lucide-react';
 import { consumeAutoDutyRequest, consumeAutoDutyOffRequest } from './LocationGate';
 import TaskVerifyModal from '../components/TaskVerifyModal';
 import { verifyTask } from '../lib/taskVerify';
@@ -802,7 +802,9 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const [scheduleRows, setScheduleRows] = useState<ScheduleEntry[]>([]);
   const [showSchedForm, setShowSchedForm] = useState(false);
   const [schedDate, setSchedDate] = useState(() => localYmd(Date.now()));
-  const [schedCity, setSchedCity] = useState('');
+  // MULTI-CITY (Boss order 2026-10-27: "Ek sath multiple city add karne ka option") —
+  // city rows array (1..8), save par saare ek hi date ke saath ban jaate hain
+  const [schedCities, setSchedCities] = useState<string[]>(['']);
   const [savingSched, setSavingSched] = useState(false);
   const [editSchedId, setEditSchedId] = useState<string | null>(null);
   const [editSchedDate, setEditSchedDate] = useState('');
@@ -829,23 +831,56 @@ export default function Home({ profile, onLogout }: HomeProps) {
       window.alert('Please pick a date.');
       return;
     }
-    if (!schedCity.trim()) {
+    // MULTI-CITY save: saare rows flat kiye — comma se likha city bhi split hota
+    // hai ("Junagadh, Patan" = 2 cities), cityKey dedupe (same city 2 baar likha
+    // to 1 hi entry). Deterministic id lsch-{uid}-{date}-{citykey} = duplicate doc
+    // phir bhi impossible; dashboard Tours page wahi collection padhta hai.
+    const seen = new Set<string>();
+    const cities: string[] = [];
+    schedCities.forEach((raw) =>
+      (raw || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((city) => {
+          const k = cityKeyOf(city);
+          if (k && !seen.has(k)) {
+            seen.add(k);
+            cities.push(city);
+          }
+        })
+    );
+    if (!cities.length) {
       window.alert('Please write the city name.');
       return;
     }
     setSavingSched(true);
     try {
-      await upsertScheduleEntry({
-        uid: profile.uid,
-        name: profile.name,
-        phone: profile.mobile,
-        date: schedDate,
-        city: schedCity.trim(),
-        source: 'self'
-      });
-      setSchedCity('');
+      const results = await Promise.allSettled(
+        cities.map((city) =>
+          upsertScheduleEntry({
+            uid: profile.uid,
+            name: profile.name,
+            phone: profile.mobile,
+            date: schedDate,
+            city,
+            source: 'self'
+          })
+        )
+      );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      const saved = cities.length - failed;
+      if (!saved) {
+        window.alert('Could not save schedule: ' + String((results[0] as PromiseRejectedResult)?.reason?.message || 'network error, please try again.'));
+        return;
+      }
+      setSchedCities(['']);
       setShowSchedForm(false);
-      showToast('Line schedule saved.');
+      showToast(
+        failed
+          ? `${saved}/${cities.length} cities saved — check connection for the rest.`
+          : `${saved} ${saved === 1 ? 'city' : 'cities'} saved to line schedule.`
+      );
     } catch (e: any) {
       window.alert('Could not save schedule: ' + String(e?.message || e));
     } finally {
@@ -1061,23 +1096,55 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
           {showSchedForm && (
             <div className="glass-card intro-rise mb-3 space-y-3 rounded-[20px] p-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
+              {/* Boss order 2026-10-27: "City ko LEFT side rakho aur date ko RIGHT me"
+                  + "ek sath multiple city add karne ka option" — City column left
+                  (multi rows + comma split), Date single field right, save par
+                  har city ki apni entry (same date) banti hai. */}
+              <div className="flex gap-3">
+                <div className="min-w-0 flex-1">
+                  <label className="sec-label">City</label>
+                  {schedCities.map((c, i) => (
+                    <div key={i} className={`flex items-center gap-2 ${i === 0 ? 'mt-1.5' : 'mt-2'}`}>
+                      <input
+                        value={c}
+                        onChange={(e) =>
+                          setSchedCities((rows) => rows.map((r, ri) => (ri === i ? e.target.value : r)))
+                        }
+                        placeholder={i === 0 ? 'e.g. Junagadh' : 'Another city…'}
+                        className="glass-inset w-full min-w-0 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:border-amber-300/50 focus:outline-none"
+                      />
+                      {schedCities.length > 1 && (
+                        <button
+                          onClick={() => setSchedCities((rows) => rows.filter((_, ri) => ri !== i))}
+                          className="shrink-0 rounded-lg border border-white/10 bg-white/5 p-2 text-slate-500 transition active:scale-95 hover:text-rose-300"
+                          title="Remove this city"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {schedCities.length < 8 ? (
+                    <button
+                      onClick={() => setSchedCities((rows) => [...rows, ''])}
+                      className="mt-2 rounded-full border border-dashed border-emerald-300/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 transition active:scale-95"
+                    >
+                      + Add City
+                    </button>
+                  ) : (
+                    <div className="mt-2 text-[9.5px] font-bold uppercase tracking-wide text-slate-600">Max 8 cities at a time</div>
+                  )}
+                  <div className="mt-1.5 text-[9.5px] leading-snug text-slate-600">
+                    Tip: tap + Add City for more, or separate names with commas.
+                  </div>
+                </div>
+                <div className="w-[38%] shrink-0">
                   <label className="sec-label">Date</label>
                   <input
                     type="date"
                     value={schedDate}
                     onChange={(e) => setSchedDate(e.target.value)}
                     className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white focus:border-amber-300/50 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="sec-label">City</label>
-                  <input
-                    value={schedCity}
-                    onChange={(e) => setSchedCity(e.target.value)}
-                    placeholder="e.g. Junagadh"
-                    className="glass-inset mt-1.5 w-full rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:border-amber-300/50 focus:outline-none"
                   />
                 </div>
               </div>
@@ -1111,19 +1178,26 @@ export default function Home({ profile, onLogout }: HomeProps) {
                   <div key={row.id} className={`glass-card rounded-[18px] px-4 py-3 ${isToday ? 'ring-1 ring-amber-300/40' : ''}`}>
                     {editSchedId === row.id ? (
                       <div className="space-y-3">
+                        {/* Boss rule: City LEFT, Date RIGHT (edit form bhi same) */}
                         <div className="grid grid-cols-2 gap-2.5">
-                          <input
-                            type="date"
-                            value={editSchedDate}
-                            onChange={(e) => setEditSchedDate(e.target.value)}
-                            className="glass-inset w-full rounded-xl p-2.5 text-xs text-white focus:outline-none"
-                          />
-                          <input
-                            value={editSchedCity}
-                            onChange={(e) => setEditSchedCity(e.target.value)}
-                            placeholder="City"
-                            className="glass-inset w-full rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none"
-                          />
+                          <div>
+                            <label className="sec-label">City</label>
+                            <input
+                              value={editSchedCity}
+                              onChange={(e) => setEditSchedCity(e.target.value)}
+                              placeholder="City"
+                              className="glass-inset mt-1.5 w-full rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="sec-label">Date</label>
+                            <input
+                              type="date"
+                              value={editSchedDate}
+                              onChange={(e) => setEditSchedDate(e.target.value)}
+                              className="glass-inset mt-1.5 w-full rounded-xl p-2.5 text-xs text-white focus:outline-none"
+                            />
+                          </div>
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -1143,32 +1217,32 @@ export default function Home({ profile, onLogout }: HomeProps) {
                       </div>
                     ) : (
                       <div className="flex items-center justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-2.5">
+                        {/* Boss rule: City LEFT (leading) aur Date RIGHT — date badge
+                            ab right side hai, city pehla element */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 text-[14.5px] font-bold text-slate-100">
+                            <MapPin className="h-3.5 w-3.5 shrink-0 text-emerald-300/80" />
+                            <span className="truncate">{row.city}</span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {isToday && (
+                              <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-wide text-amber-300">
+                                TODAY
+                              </span>
+                            )}
+                            {row.source === 'dashboard' && (
+                              <span className="rounded-full border border-sky-300/20 bg-sky-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-wide text-sky-300">
+                                FROM DASHBOARD
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
                           <div className="glass-inset shrink-0 rounded-lg px-2.5 py-1.5 text-center">
                             <div className="text-[8.5px] font-bold uppercase tracking-wide text-slate-500">{monthShort}</div>
                             <div className="text-[15px] font-black leading-none text-[#7EB3FF]">{dayNum}</div>
                             <div className="mt-0.5 text-[8px] font-bold uppercase text-slate-600">{weekday}</div>
                           </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 truncate text-[14.5px] font-bold text-slate-100">
-                              <MapPin className="h-3.5 w-3.5 shrink-0 text-emerald-300/80" />
-                              {row.city}
-                            </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                              {isToday && (
-                                <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-wide text-amber-300">
-                                  TODAY
-                                </span>
-                              )}
-                              {row.source === 'dashboard' && (
-                                <span className="rounded-full border border-sky-300/20 bg-sky-400/10 px-2 py-0.5 text-[8.5px] font-extrabold tracking-wide text-sky-300">
-                                  FROM DASHBOARD
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
                           <button
                             onClick={() => {
                               setEditSchedId(row.id || null);
