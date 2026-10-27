@@ -91,13 +91,6 @@ const TASK_TITLE_COLORS = [
   '#FCA5A5' // rose
 ];
 
-// Fixed branch avatars (Boss: "Abhi fixed" — aage real branch data)
-const FIXED_BRANCHES = [
-  { initials: 'ZS', city: 'Patan Gujarat' },
-  { initials: 'RR', city: 'Godhra, Gujarat' },
-  { initials: 'SK', city: 'Mangrol, Gujarat' }
-];
-
 // ON-DUTY BOARD PINS (Boss order 2026-10-28: "manager pin karna chahe to pin
 // bhi kar sakta hai") — manager ke device ka localStorage (per-device
 // preference hai, Firestore write ki zaroorat nahi)
@@ -136,7 +129,7 @@ function PersonChip({
   );
 }
 
-// Branch avatar ring gradients (premium — fixed branches, Boss: abhi fixed)
+// TEAM STRIP ring gradients (premium — real staff DPs, Boss 2026-10-28)
 const BRANCH_RINGS = [
   'linear-gradient(135deg, #F5B93F, #E8912D)',
   'linear-gradient(135deg, #4C9EFF, #6366F1)',
@@ -218,11 +211,12 @@ export default function Home({ profile, onLogout }: HomeProps) {
   useEffect(() => {
     reportDeviceAndLocation(profile.uid);
     const t = window.setInterval(() => {
-      // BATTERY SAVER: sales hidden me JS report skip — native LocationTrack-
-      // Service har fix par users.lastLocation+lastSeenAt likhta hai (better
-      // data, src:'svc') — JS ka 5-min GPS burst hidden me redundant tha.
-      // Worker ka 5-min report pehle jaise chalta hai (wahi uska source hai).
-      if (profile.role === 'sales' && document.hidden) return;
+      // BATTERY SAVER (Boss 2026-10-28: "mobile ek side pada hai to battery kam
+      // use ho"): app HIDDEN (screen off / doosri app) = report skip — WebView
+      // wapas visible hote hi next tick par report chalu. Sales ke liye native
+      // LocationTrackService har fix par users patch karta hi hai (src:'svc'),
+      // worker ka report foreground me hi kaafi hai.
+      if (document.hidden) return;
       reportDeviceAndLocation(profile.uid);
     }, 5 * 60 * 1000);
     return () => window.clearInterval(t);
@@ -371,7 +365,7 @@ export default function Home({ profile, onLogout }: HomeProps) {
   }, [isManager]);
 
   // ---------- MANAGER ON-DUTY LIVE BOARD (Boss order 2026-10-28) ----------
-  // FIXED_BRANCHES white box ke NICHE live list: duty par sabhi staff —
+  // TEAM STRIP (real DP rings) ke NICHE live list: duty par sabhi staff —
   // DP + naam + current location + GREEN TICK (location ON & fresh).
   // 100% READ-ONLY: users + staff_attendance + line_schedule ke listeners —
   // salesman-side me ZERO change, battery ZERO impact (native engine v76
@@ -464,6 +458,15 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const onDutyRows = useMemo(
     () => computeStaffRows(Object.values(dutyUserMap), dutyOnUids, onDutyCities, Date.now(), profile.uid, pinnedUids),
     [dutyUserMap, dutyOnUids, onDutyCities, profile.uid, odTick, pinnedUids]
+  );
+  // TEAM STRIP (Boss 2026-10-28): demo ZS/RR/SK ki jagah REAL staff DPs —
+  // sab active worker/sales (manager khud nahi), naam se sorted.
+  const teamStrip = useMemo(
+    () =>
+      Object.values(dutyUserMap)
+        .filter((u) => u.uid !== profile.uid)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [dutyUserMap, profile.uid]
   );
 
   // ---------- DP MAP (Boss order 2026-10-27: task cards me naam ke saath photo) ----------
@@ -1676,22 +1679,29 @@ export default function Home({ profile, onLogout }: HomeProps) {
       </div>
       )}
 
-      {/* FIXED branch avatars (Boss: abhi fixed — premium gradient rings)
-          BOSS ORDER 2026-10-27: "Is box me jaha mene white border kiya hai wo
-          sirf MANAGER ko dikhega aur kisi ko nahi — staff aur Salesman ise nahi
-          dekh sakte; iske bare me hum aage details me baat karenge" — isliye
-          strip ab isManager-gated (worker/sales me render hi nahi hoti). */}
-      {isManager && (
+      {/* TEAM STRIP (Boss order 2026-10-28: "ZS RR wo sab demo dikhaye hai —
+          is tarha ahmad ka bhi dp Round me dikhna chahiye aur demo ab remove
+          kar do real ring me dikhao. Jisne DP rakhi hai uska dp dikhna chahiye
+          jisne nahi rakhi uska WhatsApp ki tarha 2 words Ahmad Juneja Ka AJ."):
+          demo ZS/RR/SK HATA diye. Ab yahan REAL active staff ke DP round
+          gradient-ring me dikhte hain — photo rakhi ho to DP, warna WhatsApp-
+          style 2-word initials (Avatar component khud karta hai). DP par tap =
+          StaffDetail screen khulta hai (BILKUL waise hi jaise STAFF — LIVE
+          row par hota hai — Boss: "ahmad ki ring vali DP par tab karne se
+          uski details open hogi"). Manager khud strip me nahi. */}
+      {isManager && teamStrip.length > 0 && (
         <div className="relative z-10 mt-6 flex items-start gap-5 overflow-x-auto border-t border-white/[0.08] pb-1 pt-5">
-          {FIXED_BRANCHES.map((b, i) => (
-            <div key={b.initials} className="flex min-w-[76px] flex-col items-center gap-2">
+          {teamStrip.map((s, i) => (
+            <button
+              key={s.uid}
+              onClick={() => setDetailTarget({ uid: s.uid, name: s.name, role: s.role, photo: s.photo })}
+              className="flex min-w-[76px] flex-col items-center gap-2 transition active:scale-95"
+            >
               <div className="rounded-full p-[2.5px]" style={{ background: BRANCH_RINGS[i % BRANCH_RINGS.length] }}>
-                <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-[#0B1526] text-[17px] font-bold tracking-wide text-slate-100">
-                  {b.initials}
-                </div>
+                <Avatar photo={s.photo} name={s.name} size={56} />
               </div>
-              <span className="whitespace-nowrap text-[10.5px] font-semibold text-slate-300">{b.city}</span>
-            </div>
+              <span className="max-w-[76px] truncate text-[10.5px] font-semibold text-slate-300">{s.name}</span>
+            </button>
           ))}
           <ChevronRight className="ml-auto h-6 w-6 self-center text-[#4C9EFF]" />
         </div>

@@ -69,9 +69,16 @@ export async function fetchAppVersionInfo(): Promise<{ appVersion: string; appVe
 // (TIMEOUT code 3) par ek retry — PERMISSION_DENIED (code 1) / POSITION_
 // UNAVAILABLE (code 2 = location service band) par TURANT fail (retry bekaar).
 // GPS ko net nahi chahiye — slow internet par bhi ye chalta hai.
-export function fetchLocation(opts?: { timeoutMs?: number; retries?: number }): Promise<{ lat: number; lng: number; at: number; accuracy?: number } | null> {
+// OPTS (Boss 2026-10-28 battery order): highAccuracy=false + maxAgeMs — sirf
+// REPORTING (lastSeenAt freshness) ke liye relaxed fix chahiye, GPS chip jagane
+// ki zaroorat nahi (network fix / OS-cached position kaafi). DUTY GATE +
+// locTrack session points apne call sites par STRICT default hi rakhte hain
+// (enableHighAccuracy:true + maximumAge:0 — "koi cached fix nahi" Boss rule).
+export function fetchLocation(opts?: { timeoutMs?: number; retries?: number; highAccuracy?: boolean; maxAgeMs?: number }): Promise<{ lat: number; lng: number; at: number; accuracy?: number } | null> {
   const timeoutMs = opts?.timeoutMs ?? 6000;
   const maxRetries = opts?.retries ?? 1;
+  const highAccuracy = opts?.highAccuracy !== false;
+  const maximumAge = opts?.maxAgeMs ?? 0;
   const tryOnce = (): Promise<any> =>
     new Promise((resolve) => {
       if (!('geolocation' in navigator)) return resolve(null);
@@ -91,7 +98,7 @@ export function fetchLocation(opts?: { timeoutMs?: number; retries?: number }): 
       navigator.geolocation.getCurrentPosition(
         done,
         (e) => done({ __err: e }),
-        { timeout: timeoutMs, enableHighAccuracy: true, maximumAge: 0 }
+        { timeout: timeoutMs, enableHighAccuracy: highAccuracy, maximumAge }
       );
       window.setTimeout(() => done({ __err: { code: 3, message: 'hard-timeout' } }), timeoutMs + 2500);
     });
@@ -119,7 +126,13 @@ export async function reportDeviceAndLocation(uid: string) {
   try {
     const { deviceModel, osVersion } = parseDeviceInfo();
     const { appVersion, appVersionCode } = await fetchAppVersionInfo();
-    const loc = await fetchLocation();
+    // BATTERY SAVER (Boss 2026-10-28: "mobile ek side pada hai aur shop to
+    // battery kam use ho"): reporting ka GPS HIGH-ACCURACY nahi — network fix
+    // ya OS-cached (150s purana bhi chalega) position. Isse har 5-min report
+    // GPS chip NAHI jagata (worker + foreground sales dono bachte hain).
+    // Precise location sales ka native LocationTrackService pehle se likhta
+    // hai (users.lastLocation src:'svc'); freshness ke liye ye report hai.
+    const loc = await fetchLocation({ highAccuracy: false, maxAgeMs: 150000, timeoutMs: 8000 });
 
     const payload: any = {
       deviceModel,

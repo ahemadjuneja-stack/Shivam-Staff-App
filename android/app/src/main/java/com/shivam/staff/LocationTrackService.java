@@ -58,14 +58,17 @@ import java.util.List;
  * zinda rehta hai (notification ke saath):
  *
  *   - ADAPTIVE LOCATION ENGINE (Boss 2026-10-27: "Zomato jaisa formulas —
- *     location hamesha on rahe magar battery kam use ho"): MOVING = GPS+NETWORK
- *     45s/15m (business accuracy unchanged); 3 min ek jagah ruko = STILL =
- *     GPS chip BAND, sirf NETWORK har 4min + PASSIVE provider (dusre apps ke
- *     GPS fixes FREE) + hardware SignificantMotion sensor (hila to turant
- *     MOVING wapas). Anchor se 75m+accuracy ya 250m+ jaane par bhi MOVING.
- *     Passive flood 20s gap-guard. Research-backed: adaptive polling +
- *     displacement throttle + passive provider + motion sensor (Uber/Zomato
- *     playbook) — background GPS active time ~60-90% kam typical field day me.
+ *     location hamesha on rahe magar battery kam use ho"; Boss 2026-10-28
+ *     battery order: "ek jaga bethe ho to bar bar location nahi lena chahiye,
+ *     thoda sa chalne ke baad location leta rahe"): MOVING = GPS+NETWORK
+ *     60s/20m (fix sirf tab jab thoda sa chal gaya ho); 2 min ek jagah ruko
+ *     = STILL = GPS chip BAND, sirf NETWORK har 4min + PASSIVE provider
+ *     (dusre apps ke GPS fixes FREE) + hardware SignificantMotion sensor
+ *     (hila to turant MOVING wapas). Anchor se 75m+accuracy ya 250m+ jaane
+ *     par bhi MOVING. Passive flood 20s gap-guard. Research-backed: adaptive
+ *     polling + displacement throttle + passive provider + motion sensor
+ *     (Uber/Zomato playbook) — background GPS active time ~60-90% kam
+ *     typical field day me.
  *   - Firestore REST (rules open — Task 49 verified) DIRECT writes, koi
  *     Firebase SDK nahi chahiye (java.net + org.json built-in):
  *       loc_sessions/{ls-uid-at}  points[]  <- poora road map
@@ -90,17 +93,22 @@ public class LocationTrackService extends Service {
 
     private static final String BASE =
             "https://firestore.googleapis.com/v1/projects/shivam-staff-ff7d5/databases/(default)/documents/";
-    private static final String CHANNEL_ID = "shivam_tracking";
+    private static final String CHANNEL_ID = "shivam_track_v2";
+    private static final String CHANNEL_ID_OLD = "shivam_tracking";
     private static final int NOTIF_ID = 7361;
-    private static final long FIX_INTERVAL_MS = 45000L;
-    private static final float FIX_MIN_DIST_M = 15f;
+    // BATTERY (Boss 2026-10-28: "ek jaga bethe ho to bar bar location nahi
+    // lena chahiye, thoda sa chalne ke baad location leta rahe"): MOVING fix
+    // 45s/15m -> 60s/20m (displacement-driven — ruka hua vyakti fix trigger
+    // nahi karega) + STILL confirm 3min -> 2min (GPS chip 1 min pehle band).
+    private static final long FIX_INTERVAL_MS = 60000L;
+    private static final float FIX_MIN_DIST_M = 20f;
     // ---- ADAPTIVE BATTERY ENGINE constants ----
     private static final int MODE_MOVING = 0;
     private static final int MODE_STILL = 1;
     private static final long STILL_INTERVAL_MS = 240000L;   // STILL: network fix har 4min
     private static final float STILL_MIN_DIST_M = 40f;       // STILL: 40m displacement
     private static final float STATIONARY_RADIUS_M = 75f;    // anchor radius (accuracy-aware)
-    private static final long STILL_CONFIRM_MS = 180000L;    // 3 min still -> GPS band
+    private static final long STILL_CONFIRM_MS = 120000L;    // 2 min still -> GPS band (Boss 2026-10-28 battery order)
     private static final long MIN_FIX_GAP_MS = 20000L;       // passive flood guard
     private static final int FLUSH_AT = 2;                 // points per commit
     private static final long FLUSH_MAX_AGE_MS = 90000L;
@@ -230,24 +238,51 @@ public class LocationTrackService extends Service {
         }
     }
 
+    /** NOTIFICATION JUGAAD (Boss 2026-10-28: "kam se kam unhe notification naa
+     *  dikhe ke battery le raha hai aur background me chal raha hai — apne
+     *  hisab se kuch jugad lagao"):
+     *  1) NAYA channel "shivam_track_v2" IMPORTANCE_MIN par — notification
+     *     drawer ke SABSE NICHE silent section me jata hai (Android 13+ "Ongoing"
+     *     collapsed section), koi sound/vibration/badge nahi, lockscreen par
+     *     nahi dikhta. Kuch OEM ROMs (Xiaomi/Samsung) MIN ko status bar se
+     *     poora chhupa bhi dete hain. PURANA channel (IMPORTANCE_LOW) delete —
+     *     channel importance immutable hota hai, isliye naya ID zaroori tha.
+     *  2) Text me battery/tracking/background jaise shabd NAHI — bas "App
+     *     connected" (normal sync service jaisa neutral).
+     *  3) FOREGROUND_SERVICE_DEFERRED (API 31+): notification turant pop nahi
+     *     hoti. NOTE: Android system ka "Active apps" panel (long-press) FGS
+     *     chalne par dikhata hi hai — wo OS UI hai, hum nahi hata sakte;
+     *     par user ko notification bar me battery-warning AB nahi dikhegi. */
     private Notification buildNotification() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (Build.VERSION.SDK_INT >= 26 && nm != null
-                && nm.getNotificationChannel(CHANNEL_ID) == null) {
-            NotificationChannel ch = new NotificationChannel(CHANNEL_ID,
-                    "Staff Location Tracking", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("Keeps location updates flowing to the dashboard while the app is closed.");
-            ch.setShowBadge(false);
-            nm.createNotificationChannel(ch);
+        if (Build.VERSION.SDK_INT >= 26 && nm != null) {
+            try {
+                nm.deleteNotificationChannel(CHANNEL_ID_OLD); // purana LOW-importance channel hatao
+            } catch (Exception ignore) {
+            }
+            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+                NotificationChannel ch = new NotificationChannel(CHANNEL_ID,
+                        "Staff App", NotificationManager.IMPORTANCE_MIN);
+                ch.setDescription("Keeps the app connected while you work.");
+                ch.setShowBadge(false);
+                nm.createNotificationChannel(ch);
+            }
         }
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(getApplicationInfo().icon)
                 .setContentTitle("Shivam Staff")
-                .setContentText("Location tracking active")
+                .setContentText("App connected")
                 .setOngoing(true)
                 .setSilent(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setShowWhen(false)
+                .setPriority(NotificationCompat.PRIORITY_MIN)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE);
+        if (Build.VERSION.SDK_INT >= 31) {
+            try {
+                b.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED);
+            } catch (Exception ignore) {
+            }
+        }
         return b.build();
     }
 
@@ -366,7 +401,8 @@ public class LocationTrackService extends Service {
             }
             boolean any = false;
             if (mode == MODE_MOVING) {
-                // MOVING: GPS + NETWORK har 45s/15m — business accuracy jaisi pehle thi
+                // MOVING: GPS + NETWORK 60s/20m — fix tab hi jab thoda sa chal
+                // gaya (Boss 2026-10-28: "thoda sa chalne ke baad location leta rahe")
                 try {
                     lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, FIX_INTERVAL_MS,
                             FIX_MIN_DIST_M, locListener, locHandler.getLooper());
