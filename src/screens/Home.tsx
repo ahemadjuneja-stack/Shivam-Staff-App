@@ -1493,20 +1493,26 @@ export default function Home({ profile, onLogout }: HomeProps) {
       </div>
       )}
 
-      {/* FIXED branch avatars (Boss: abhi fixed — premium gradient rings) */}
-      <div className="relative z-10 mt-6 flex items-start gap-5 overflow-x-auto border-t border-white/[0.08] pb-1 pt-5">
-        {FIXED_BRANCHES.map((b, i) => (
-          <div key={b.initials} className="flex min-w-[76px] flex-col items-center gap-2">
-            <div className="rounded-full p-[2.5px]" style={{ background: BRANCH_RINGS[i % BRANCH_RINGS.length] }}>
-              <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-[#0B1526] text-[17px] font-bold tracking-wide text-slate-100">
-                {b.initials}
+      {/* FIXED branch avatars (Boss: abhi fixed — premium gradient rings)
+          BOSS ORDER 2026-10-27: "Is box me jaha mene white border kiya hai wo
+          sirf MANAGER ko dikhega aur kisi ko nahi — staff aur Salesman ise nahi
+          dekh sakte; iske bare me hum aage details me baat karenge" — isliye
+          strip ab isManager-gated (worker/sales me render hi nahi hoti). */}
+      {isManager && (
+        <div className="relative z-10 mt-6 flex items-start gap-5 overflow-x-auto border-t border-white/[0.08] pb-1 pt-5">
+          {FIXED_BRANCHES.map((b, i) => (
+            <div key={b.initials} className="flex min-w-[76px] flex-col items-center gap-2">
+              <div className="rounded-full p-[2.5px]" style={{ background: BRANCH_RINGS[i % BRANCH_RINGS.length] }}>
+                <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-[#0B1526] text-[17px] font-bold tracking-wide text-slate-100">
+                  {b.initials}
+                </div>
               </div>
+              <span className="whitespace-nowrap text-[10.5px] font-semibold text-slate-300">{b.city}</span>
             </div>
-            <span className="whitespace-nowrap text-[10.5px] font-semibold text-slate-300">{b.city}</span>
-          </div>
-        ))}
-        <ChevronRight className="ml-auto h-6 w-6 self-center text-[#4C9EFF]" />
-      </div>
+          ))}
+          <ChevronRight className="ml-auto h-6 w-6 self-center text-[#4C9EFF]" />
+        </div>
+      )}
 
       {/* BOTTOM ROW — Polls (SOON) | Salary Info. (SOON) | On/Off duty toggle */}
       <div className="relative z-10 mt-6 flex flex-wrap items-center gap-3">
