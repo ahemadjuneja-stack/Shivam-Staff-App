@@ -38,8 +38,9 @@ import {
   markAutoCloseDone,
   MAX_SHIFT_MS
 } from '../lib/integrity';
-import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock } from 'lucide-react';
-import { computeOnDutyRows, fmtAgo, CityCoord, DutyUserMeta } from '../lib/onDuty';
+import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock, Pin } from 'lucide-react';
+import { computeStaffRows, fmtAgo, CityCoord, DutyUserMeta } from '../lib/onDuty';
+import StaffDetailScreen, { StaffDetailTarget } from './StaffDetail';
 import { consumeAutoDutyRequest, consumeAutoDutyOffRequest } from './LocationGate';
 import TaskVerifyModal from '../components/TaskVerifyModal';
 import { verifyTask } from '../lib/taskVerify';
@@ -94,6 +95,11 @@ const FIXED_BRANCHES = [
   { initials: 'RR', city: 'Godhra, Gujarat' },
   { initials: 'SK', city: 'Mangrol, Gujarat' }
 ];
+
+// ON-DUTY BOARD PINS (Boss order 2026-10-28: "manager pin karna chahe to pin
+// bhi kar sakta hai") — manager ke device ka localStorage (per-device
+// preference hai, Firestore write ki zaroorat nahi)
+const ONDUTY_PIN_KEY = 'shivam_onduty_pins';
 
 // Premium meta chip (Task Date / Duration / By) — glass inset
 function MetaChip({ icon: Icon, label, value }: { icon: typeof CalendarDays; label: string; value: string }) {
@@ -374,6 +380,29 @@ export default function Home({ profile, onLogout }: HomeProps) {
   const [dutyOnUids, setDutyOnUids] = useState<Record<string, string>>({});
   const [onDutyCities, setOnDutyCities] = useState<CityCoord[]>([]);
   const [odTick, setOdTick] = useState(0);
+  // PIN (Boss 2026-10-28): pinned staff board me sabse upar
+  const [pinnedUids, setPinnedUids] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(ONDUTY_PIN_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const togglePin = (uid: string) => {
+    setPinnedUids((prev) => {
+      const next = prev.includes(uid) ? prev.filter((x) => x !== uid) : [...prev, uid];
+      try {
+        localStorage.setItem(ONDUTY_PIN_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+  // DETAIL (Boss 2026-10-28): row/DP tap -> StaffDetail slide screen
+  const [detailTarget, setDetailTarget] = useState<StaffDetailTarget | null>(null);
   useEffect(() => {
     if (!isManager) return;
     const unsubs: Array<() => void> = [];
@@ -431,8 +460,8 @@ export default function Home({ profile, onLogout }: HomeProps) {
     return () => { unsubs.forEach((u) => u()); window.clearInterval(t); };
   }, [isManager]);
   const onDutyRows = useMemo(
-    () => computeOnDutyRows(Object.values(dutyUserMap), dutyOnUids, onDutyCities, Date.now(), profile.uid),
-    [dutyUserMap, dutyOnUids, onDutyCities, profile.uid, odTick]
+    () => computeStaffRows(Object.values(dutyUserMap), dutyOnUids, onDutyCities, Date.now(), profile.uid, pinnedUids),
+    [dutyUserMap, dutyOnUids, onDutyCities, profile.uid, odTick, pinnedUids]
   );
 
   // ---------- DP MAP (Boss order 2026-10-27: task cards me naam ke saath photo) ----------
@@ -1605,16 +1634,16 @@ export default function Home({ profile, onLogout }: HomeProps) {
         </div>
       )}
 
-      {/* ON-DUTY LIVE BOARD (Boss order 2026-10-28): white box ke NICHE — duty par
-          sabhi staff: DP + naam + location + GREEN TICK (location ON & fresh).
-          Sirf manager ko dikhta hai (Task 84 gate wahi). READ-ONLY — koi write
-          nahi, salesman app me kuch nahi badla, battery ZERO impact. */}
+      {/* ON-DUTY LIVE BOARD v2 (Boss order 2026-10-28): sabhi ACTIVE staff dikhenge
+          (sirf 3/duty-par nahi) — box me 4 rows, baki ke liye INNER SCROLL. Row/DP
+          tap -> StaffDetail screen. PIN badge pinned rows par. Sirf manager ko dikhta
+          hai (Task 84 gate wahi). READ-ONLY — koi write nahi, battery ZERO impact. */}
       {isManager && (
         <div className="relative z-10 mt-4">
           <div className="glass-card rounded-2xl p-4">
             <div className="mb-1 flex items-center gap-2">
               <MapPin className="h-4 w-4 text-emerald-300" />
-              <span className="text-[12px] font-extrabold tracking-[0.14em] text-slate-300">ON DUTY — LIVE</span>
+              <span className="text-[12px] font-extrabold tracking-[0.14em] text-slate-300">STAFF — LIVE</span>
               <span className="rounded-full border border-white/10 bg-[#101B31] px-2 py-px text-[10px] font-bold text-slate-300">
                 {onDutyRows.length}
               </span>
@@ -1625,17 +1654,31 @@ export default function Home({ profile, onLogout }: HomeProps) {
             </div>
             {onDutyRows.length === 0 ? (
               <p className="py-3 text-[12.5px] text-slate-500">
-                Koi staff duty par nahi hai — location/duty ON hote hi live dikhega.
+                Koi active staff nahi mila — staff add hone par yahan dikhega.
               </p>
             ) : (
-              <div className="divide-y divide-white/[0.05]">
+              <div className="mt-1 max-h-[252px] divide-y divide-white/[0.05] overflow-y-auto overscroll-contain">
                 {onDutyRows.map((r) => (
-                  <div key={r.uid} className="flex items-center gap-3 py-2.5">
-                    <div
-                      className="shrink-0 rounded-full"
-                      style={r.fresh ? { boxShadow: '0 0 0 2px rgba(52,211,153,0.55)' } : undefined}
-                    >
-                      <Avatar photo={r.photo} name={r.name} size={38} />
+                  <button
+                    key={r.uid}
+                    onClick={() => setDetailTarget({ uid: r.uid, name: r.name, role: r.role, photo: r.photo })}
+                    className={`flex w-full items-center gap-3 py-2.5 text-left transition active:scale-[0.99] ${
+                      r.onDuty ? '' : 'opacity-70'
+                    }`}
+                  >
+                    <div className="relative shrink-0">
+                      <div
+                        className="rounded-full"
+                        style={r.fresh ? { boxShadow: '0 0 0 2px rgba(52,211,153,0.55)' } : undefined}
+                      >
+                        <Avatar photo={r.photo} name={r.name} size={38} />
+                      </div>
+                      {pinnedUids.includes(r.uid) && (
+                        <Pin
+                          className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full bg-[#101B31] p-px text-amber-300"
+                          fill="currentColor"
+                        />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
@@ -1647,9 +1690,18 @@ export default function Home({ profile, onLogout }: HomeProps) {
                         >
                           {r.role === 'sales' ? 'SALES' : 'STAFF'}
                         </span>
+                        {!r.onDuty && (
+                          <span className="rounded bg-slate-400/15 px-1 py-px text-[8px] font-extrabold tracking-wider text-slate-400">
+                            DUTY OFF
+                          </span>
+                        )}
                       </div>
                       <div className="mt-0.5 flex items-center gap-1 text-[11.5px] text-slate-400">
-                        <MapPin className={`h-3 w-3 shrink-0 ${r.fresh ? 'text-emerald-300' : 'text-slate-500'}`} />
+                        <MapPin
+                          className={`h-3 w-3 shrink-0 ${
+                            r.fresh ? 'text-emerald-300' : r.onDuty ? 'text-slate-500' : 'text-slate-600'
+                          }`}
+                        />
                         <span className="truncate">{r.label}</span>
                         {r.lastAt > 0 && (
                           <span className="shrink-0 text-slate-500">· {fmtAgo(r.lastAt, Date.now())}</span>
@@ -1661,10 +1713,12 @@ export default function Home({ profile, onLogout }: HomeProps) {
                         className="h-6 w-6 shrink-0 text-emerald-400"
                         style={{ fill: 'rgba(52,211,153,0.16)' }}
                       />
-                    ) : (
+                    ) : r.onDuty ? (
                       <Clock className="h-5 w-5 shrink-0 text-amber-400/80" />
+                    ) : (
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-600" />
                     )}
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -1743,6 +1797,20 @@ export default function Home({ profile, onLogout }: HomeProps) {
 
       {/* PROFILE — naam tap -> slide overlay (photo add/edit, slide se band) */}
       {showProfile && <ProfileScreen profile={profile} onBack={() => setShowProfile(false)} />}
+
+      {/* STAFF DETAIL (Boss 2026-10-28): row/DP tap -> slide screen —
+          SALES: last location ON kahan/kab + aaj ka poora tour + "Location N din
+          purana hai" banner; WORKER: duty IN/OFF/total + sirf BINA-BATAYE bahar
+          events (dukan ke kaam/authorized hide). Slide se band (Boss rule). */}
+      {detailTarget && (
+        <StaffDetailScreen
+          staff={detailTarget}
+          cities={onDutyCities}
+          pinned={pinnedUids.includes(detailTarget.uid)}
+          onTogglePin={() => togglePin(detailTarget.uid)}
+          onBack={() => setDetailTarget(null)}
+        />
+      )}
 
     </div>
   );
