@@ -218,15 +218,15 @@ export default function TourHisabScreen({
             <div className="grid grid-cols-4 gap-2">
               <div className="glass-inset rounded-2xl px-2 py-3 text-center">
                 <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Diya</p>
-                <p className="mt-0.5 text-[13px] font-extrabold text-emerald-300">{fmtMoney(totals.paidP)}</p>
+                <p className="mt-0.5 text-[15px] font-extrabold leading-none text-emerald-300">{fmtMoney(totals.paidP)}</p>
               </div>
               <div className="glass-inset rounded-2xl px-2 py-3 text-center">
                 <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Jama</p>
-                <p className="mt-0.5 text-[13px] font-extrabold text-sky-300">{fmtMoney(totals.jamaP)}</p>
+                <p className="mt-0.5 text-[15px] font-extrabold leading-none text-sky-300">{fmtMoney(totals.jamaP)}</p>
               </div>
               <div className="glass-inset rounded-2xl px-2 py-3 text-center">
                 <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Haath me</p>
-                <p className={`mt-0.5 text-[13px] font-extrabold ${totals.haathP >= 0 ? 'text-amber-300' : 'text-rose-300'}`}>{fmtMoney(totals.haathP)}</p>
+                <p className={`mt-0.5 text-[15px] font-extrabold leading-none ${totals.haathP >= 0 ? 'text-amber-300' : 'text-rose-300'}`}>{fmtMoney(totals.haathP)}</p>
               </div>
               <div className="glass-inset rounded-2xl px-2 py-3 text-center">
                 <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">GR / Less</p>
@@ -234,9 +234,9 @@ export default function TourHisabScreen({
               </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5 px-1">
-              <span className="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[9px] font-extrabold text-emerald-300">CASH {fmtMoney(totals.cashP)}</span>
-              <span className="rounded-full bg-sky-400/10 px-2 py-0.5 text-[9px] font-extrabold text-sky-300">UPI {fmtMoney(totals.upiP)}</span>
-              <span className="rounded-full bg-violet-400/10 px-2 py-0.5 text-[9px] font-extrabold text-violet-300">CHEQUE {fmtMoney(totals.cheqP)}</span>
+              <span className="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] font-extrabold text-emerald-300">CASH {fmtMoney(totals.cashP)}</span>
+              <span className="rounded-full bg-sky-400/10 px-2 py-0.5 text-[10px] font-extrabold text-sky-300">UPI {fmtMoney(totals.upiP)}</span>
+              <span className="rounded-full bg-violet-400/10 px-2 py-0.5 text-[10px] font-extrabold text-violet-300">CHEQUE {fmtMoney(totals.cheqP)}</span>
             </div>
           </div>
 
@@ -306,11 +306,11 @@ export default function TourHisabScreen({
               <div className="space-y-1.5">
                 {deposits.map((d, i) => (
                   <div key={i} className="glass-inset flex items-center gap-2 rounded-xl px-3 py-2.5">
-                    <Wallet className="h-3.5 w-3.5 shrink-0 text-sky-300" />
-                    <span className="text-[13px] font-extrabold text-sky-300">{fmtMoney(d.amtP)}</span>
-                    <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-extrabold text-slate-300">{modeLabel(d.mode)}</span>
-                    <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-300">@ {d.place}</span>
-                    <span className="shrink-0 text-[9px] font-semibold text-slate-500">{fmtT(d.at)}</span>
+                    <Wallet className="h-4 w-4 shrink-0 text-sky-300" />
+                    <span className="text-[15px] font-extrabold tabular-nums text-sky-300">{fmtMoney(d.amtP)}</span>
+                    <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9.5px] font-extrabold text-slate-300">{modeLabel(d.mode)}</span>
+                    <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-slate-300">@ {d.place}</span>
+                    <span className="shrink-0 text-[9.5px] font-semibold text-slate-500">{fmtT(d.at)}</span>
                   </div>
                 ))}
               </div>
@@ -365,15 +365,16 @@ export default function TourHisabScreen({
                             <button onClick={() => openShopForm(sh)} className="flex w-full items-center gap-2.5 px-3.5 py-3 text-left">
                               <Store className="h-4 w-4 shrink-0 text-slate-400" />
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-[13px] font-extrabold text-white">{sh.name}</span>
+                                <span className="block truncate text-[14px] font-extrabold text-white">{sh.name}</span>
                                 <span className="block truncate text-[10px] font-semibold text-slate-500">
-                                  {sh.code}{sh.bills.length ? ` · ${sh.bills.length} bills · bal ${fmtMoney(sh.balP)}` : ''}
+                                  {sh.code}{sh.bills.length ? ` · ${sh.bills.length} bills · ` : ''}
+                                  {sh.bills.length ? <span className="font-extrabold text-amber-300/90">bal {fmtMoney(sh.balP)}</span> : ''}
                                 </span>
                               </span>
                               {savedTick === sh.key ? (
                                 <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-400/15 px-2 py-1 text-[9px] font-extrabold text-emerald-300">SAVED</span>
                               ) : e ? (
-                                <span className="shrink-0 rounded-full bg-emerald-400/15 px-2 py-1 text-[9.5px] font-extrabold text-emerald-300">
+                                <span className="shrink-0 rounded-full bg-emerald-400/15 px-2.5 py-1 text-[11px] font-extrabold text-emerald-300">
                                   {fmtMoney(e.paidP)} {e.mode ? `· ${modeLabel(e.mode)}` : ''}
                                 </span>
                               ) : (
@@ -384,44 +385,54 @@ export default function TourHisabScreen({
 
                             {shopOpen && (
                               <div className="space-y-2.5 border-t border-white/5 p-3.5">
-                                {/* miracle context */}
+                                {/* miracle bills — BADE FONT me (Boss: bill amount chota dikhta tha, salesman ko dikkat hoti thi) */}
                                 {sh.bills.length > 0 && (
-                                  <div className="rounded-xl bg-white/[0.03] px-3 py-2">
-                                    <p className="mb-1 text-[9px] font-extrabold uppercase tracking-wider text-slate-500">Miracle hisab (dashboard ka data)</p>
-                                    <div className="max-h-24 space-y-0.5 overflow-y-auto">
-                                      {sh.bills.slice(-6).map((b, bi) => (
-                                        <div key={bi} className="flex items-center gap-2 text-[10px] text-slate-400">
-                                          <span className="w-16 shrink-0">{b.date}</span>
-                                          <span className="tabular-nums">bill {fmtMoney(b.amtP)}</span>
-                                          <span className="ml-auto tabular-nums text-slate-500">bal {fmtMoney(b.balP)}</span>
-                                          {b.recvP > 0 && <span className="tabular-nums text-emerald-400/80">recv {fmtMoney(b.recvP)}</span>}
+                                  <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2.5">
+                                    <p className="mb-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-300/90">
+                                      Bills — dashboard ka data ({sh.bills.length})
+                                    </p>
+                                    <div className="max-h-64 space-y-1.5 overflow-y-auto">
+                                      {sh.bills.map((b, bi) => (
+                                        <div key={bi} className="rounded-lg bg-slate-950/40 px-3 py-2">
+                                          <div className="flex items-center gap-2">
+                                            <span className="shrink-0 text-[11.5px] font-bold text-slate-400">{b.date}</span>
+                                            <span className="ml-auto text-[18px] font-extrabold leading-none tabular-nums text-white">{fmtMoney(b.amtP)}</span>
+                                          </div>
+                                          <div className="mt-1.5 flex items-center gap-3 text-[12px] font-bold tabular-nums">
+                                            <span className="text-amber-300">Bal {fmtMoney(b.balP)}</span>
+                                            {b.recvP > 0 && <span className="text-emerald-300">Recv {fmtMoney(b.recvP)}</span>}
+                                          </div>
                                         </div>
                                       ))}
+                                    </div>
+                                    <div className="mt-2 flex items-center justify-between border-t border-white/10 px-1 pt-2">
+                                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shop ka total balance</span>
+                                      <span className="text-[16px] font-extrabold leading-none tabular-nums text-amber-300">{fmtMoney(sh.balP)}</span>
                                     </div>
                                   </div>
                                 )}
                                 {/* hisab form */}
                                 <div className="flex gap-2">
                                   <div className="min-w-0 flex-1">
-                                    <label className="mb-1 block px-1 text-[9px] font-extrabold uppercase tracking-wider text-slate-500">GR (R.Goods ₹)</label>
+                                    <label className="mb-1 block px-1 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-500">GR (R.Goods ₹)</label>
                                     <input value={fGr} onChange={(ev) => setFGr(ev.target.value)} inputMode="decimal" placeholder="0"
-                                      className="glass-inset w-full rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none" />
+                                      className="glass-inset w-full rounded-xl p-3 text-[15px] font-extrabold tabular-nums text-white placeholder-slate-600 focus:outline-none" />
                                   </div>
                                   <div className="min-w-0 flex-1">
-                                    <label className="mb-1 block px-1 text-[9px] font-extrabold uppercase tracking-wider text-slate-500">Less ₹</label>
+                                    <label className="mb-1 block px-1 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-500">Less ₹</label>
                                     <input value={fLess} onChange={(ev) => setFLess(ev.target.value)} inputMode="decimal" placeholder="0"
-                                      className="glass-inset w-full rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none" />
+                                      className="glass-inset w-full rounded-xl p-3 text-[15px] font-extrabold tabular-nums text-white placeholder-slate-600 focus:outline-none" />
                                   </div>
                                   <div className="min-w-0 flex-1">
-                                    <label className="mb-1 block px-1 text-[9px] font-extrabold uppercase tracking-wider text-slate-500">Paisa Diya ₹</label>
+                                    <label className="mb-1 block px-1 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-500">Paisa Diya ₹</label>
                                     <input value={fPaid} onChange={(ev) => setFPaid(ev.target.value)} inputMode="decimal" placeholder="0"
-                                      className="glass-inset w-full rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none" />
+                                      className="glass-inset w-full rounded-xl p-3 text-[15px] font-extrabold tabular-nums text-white placeholder-slate-600 focus:outline-none" />
                                   </div>
                                 </div>
                                 <div className="flex gap-2">
                                   {MODES.map((m) => (
                                     <button key={m.id} onClick={() => setFMode(m.id)}
-                                      className={`flex-1 rounded-xl border py-2 text-center text-[11px] font-extrabold transition ${
+                                      className={`flex-1 rounded-xl border py-2.5 text-center text-[12.5px] font-extrabold transition ${
                                         fMode === m.id ? 'border-emerald-300/40 bg-emerald-400/15 text-emerald-300' : 'border-white/10 bg-white/5 text-slate-400'
                                       }`}>
                                       {m.label}
@@ -431,7 +442,7 @@ export default function TourHisabScreen({
                                 <input value={fNote} onChange={(ev) => setFNote(ev.target.value)} placeholder="Note (optional — jaise cheque no.)"
                                   className="glass-inset w-full rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none" />
                                 <button onClick={() => saveEntry(city, sh)} disabled={saving}
-                                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 py-3 text-xs font-extrabold text-slate-950 shadow-lg shadow-emerald-500/25 transition active:scale-95 disabled:opacity-50">
+                                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 py-3.5 text-[14px] font-extrabold text-slate-950 shadow-lg shadow-emerald-500/25 transition active:scale-95 disabled:opacity-50">
                                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <HandCoins className="h-4 w-4" />}
                                   {saving ? 'Saving...' : 'Hisab Save Karo'}
                                 </button>
