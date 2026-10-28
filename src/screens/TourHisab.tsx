@@ -9,7 +9,7 @@ import {
 import { useSwipeBack, SWIPE_OVERLAY_STYLE } from '../lib/swipeBack';
 import {
   Truck, MapPin, Store, ChevronDown, ChevronRight, Wallet, Landmark,
-  CheckCircle2, Loader2, HandCoins, Search
+  CheckCircle2, Loader2, HandCoins
 } from 'lucide-react';
 
 // ============================================================
@@ -41,9 +41,7 @@ export default function TourHisabScreen({
   const [tour, setTour] = useState<{ name: string; date?: string; cities: RTCity[] } | null>(null);
   const [tourMissing, setTourMissing] = useState(false);
   const [hisab, setHisab] = useState<TourHisabDoc | null>(null);
-  const [openCities, setOpenCities] = useState<number[] | null>(null); // null = SAB cities khule (easy default — Boss: extra tap nahi)
-  const [q, setQ] = useState('');
-  const [showGrLess, setShowGrLess] = useState(false);
+  const [openCity, setOpenCity] = useState<number | null>(null); // ek waqt me EK city khuli — simple focused list (Boss: sab khula = complicated)
   const [openShop, setOpenShop] = useState('');
   const [fGr, setFGr] = useState('');
   const [fLess, setFLess] = useState('');
@@ -108,30 +106,6 @@ export default function TourHisabScreen({
   const totals = useMemo(() => totalsOf(hisab?.entries, hisab?.deposits), [hisab]);
   const deposits = useMemo(() => [...(hisab?.deposits || [])].sort((a, b) => (b.at || 0) - (a.at || 0)), [hisab]);
 
-  // SEARCH — dukan ka naam likho seedha wahi mile; city naam match = poora city, warna sirf matching shops
-  const ql = q.trim().toLowerCase();
-  const visCities = useMemo(() => {
-    if (!tour) return [];
-    if (!ql) return tour.cities.map((city) => ({ city, shops: city.shops }));
-    return tour.cities
-      .map((city) => ({
-        city,
-        shops: city.name.toLowerCase().includes(ql)
-          ? city.shops
-          : city.shops.filter((sh) => sh.name.toLowerCase().includes(ql) || sh.code.toLowerCase().includes(ql))
-      }))
-      .filter((x) => x.shops.length > 0);
-  }, [tour, ql]);
-
-  const toggleCity = (ci: number, isOpen: boolean) => {
-    const n = tour?.cities.length || 0;
-    setOpenCities((prev) => {
-      const cur = prev === null ? Array.from({ length: n }, (_, i) => i) : prev;
-      return isOpen ? cur.filter((x) => x !== ci) : [...new Set([...cur, ci])];
-    });
-    setOpenShop('');
-  };
-
   const openShopForm = (sh: RTShop) => {
     if (openShop === sh.key) { setOpenShop(''); return; }
     const e = hisab?.entries?.[sh.key];
@@ -140,7 +114,6 @@ export default function TourHisabScreen({
     setFPaid(e ? numIn(e.paidP) : '');
     setFMode(e?.mode && e.mode >= 1 && e.mode <= 3 ? e.mode : 1);
     setFNote(e?.note || '');
-    setShowGrLess(!!e?.grP || !!e?.lessP);
     setOpenShop(sh.key);
     // khulte hi form screen me aa jaye — dhoondna na pade (Boss: easy to use)
     window.setTimeout(() => {
@@ -351,15 +324,7 @@ export default function TourHisabScreen({
           {/* ============ CITIES -> SHOPS -> HISAB ============ */}
           <div className="relative z-10 mb-2 mt-5 flex items-center justify-between px-1">
             <h2 className="text-[17px] font-semibold text-[#B7C5F0]">Cities & Shops</h2>
-            <span className="text-[10px] font-bold text-slate-500">
-              {ql ? `${visCities.reduce((a, x) => a + x.shops.length, 0)} shop mili` : `${tour.cities.length} cities`}
-            </span>
-          </div>
-          {/* SEARCH — scroll karne ki zaroorat nahi, naam likho seedha dukan milegi */}
-          <div className="relative z-10 mb-2.5">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-            <input value={q} onChange={(ev) => setQ(ev.target.value)} placeholder="Dukan ka naam likho — seedha dhoondo"
-              className="glass-inset w-full rounded-2xl py-3 pl-10 pr-4 text-[13px] font-bold text-white placeholder-slate-500 focus:outline-none" />
+            <span className="text-[10px] font-bold text-slate-500">{tour.cities.length} cities</span>
           </div>
           <div className="relative z-10 space-y-2.5 pb-6">
             {tour.cities.length === 0 && (
@@ -367,19 +332,13 @@ export default function TourHisabScreen({
                 Is tour me koi city nahi
               </div>
             )}
-            {ql && visCities.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.025] px-4 py-5 text-center text-xs text-slate-500">
-                "{q.trim()}" naam ki koi shop nahi mili
-              </div>
-            )}
-            {visCities.map(({ city, shops }) => {
-              const ci = tour.cities.indexOf(city);
-              const cityOpen = openCities === null || openCities.includes(ci);
+            {tour.cities.map((city, ci) => {
+              const cityOpen = openCity === ci;
               const cityEntries = city.shops.filter((sh) => hisab?.entries?.[sh.key]).length;
               return (
                 <div key={ci} className="glass-card intro-rise overflow-hidden rounded-[20px]">
                   <button
-                    onClick={() => toggleCity(ci, cityOpen)}
+                    onClick={() => { setOpenCity(cityOpen ? null : ci); setOpenShop(''); }}
                     className="flex w-full items-center gap-3 px-4 py-3.5 text-left"
                   >
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-amber-300/20 bg-amber-400/10">
@@ -402,7 +361,7 @@ export default function TourHisabScreen({
                       {city.shops.length === 0 && (
                         <p className="px-1 py-2 text-center text-[11px] text-slate-500">Is city me koi shop nahi</p>
                       )}
-                      {shops.map((sh) => {
+                      {city.shops.map((sh) => {
                         const e = hisab?.entries?.[sh.key];
                         const shopOpen = openShop === sh.key;
                         return (
@@ -415,20 +374,15 @@ export default function TourHisabScreen({
                                   {sh.code}{sh.bills.length ? ` · ${sh.bills.length} bills` : ''}
                                 </span>
                               </span>
-                              <span className="flex shrink-0 flex-col items-end gap-1">
-                                {sh.bills.length > 0 && (
-                                  <span className="text-[16px] font-extrabold leading-none tabular-nums text-amber-300">{fmtMoney(sh.balP)}</span>
-                                )}
-                                {savedTick === sh.key ? (
-                                  <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[9px] font-extrabold text-emerald-300">SAVED ✓</span>
-                                ) : e ? (
-                                  <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-extrabold text-emerald-300">
-                                    {e.paidP ? `${fmtMoney(e.paidP)} ${e.mode === 2 ? 'UPI' : e.mode === 3 ? 'CHEQUE' : 'CASH'}` : 'HISAB ✓'}
-                                  </span>
-                                ) : (
-                                  <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-[9px] font-extrabold text-amber-300">HISAB PENDING</span>
-                                )}
-                              </span>
+                              {savedTick === sh.key || e ? (
+                                <span className="flex shrink-0 items-center gap-1 text-[13.5px] font-extrabold tabular-nums text-emerald-300">
+                                  <CheckCircle2 className="h-4 w-4" />{e?.paidP ? fmtMoney(e.paidP) : ''}
+                                </span>
+                              ) : sh.bills.length > 0 ? (
+                                <span className="shrink-0 text-[16px] font-extrabold leading-none tabular-nums text-amber-300">{fmtMoney(sh.balP)}</span>
+                              ) : (
+                                <span className="shrink-0 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Hisab baki</span>
+                              )}
                               {shopOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-500" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />}
                             </button>
 
@@ -460,17 +414,23 @@ export default function TourHisabScreen({
                                     </div>
                                   </div>
                                 )}
-                                {/* hisab form — SIMPLE (Boss: easy to use). Sabse bada sawal sirf 1: kitna paisa diya */}
+                                {/* hisab form — SIRF 3 FIELDS, sab dikhte hain kuch chhupa nahi (Boss: chhupa hua = complicated) */}
                                 <div>
                                   <label className="mb-1.5 block px-1 text-[10.5px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Kitna paisa diya? ₹</label>
                                   <input value={fPaid} onChange={(ev) => setFPaid(ev.target.value)} inputMode="decimal" placeholder="0"
                                     className="glass-inset w-full rounded-2xl px-4 py-4 text-[26px] font-extrabold tabular-nums text-white placeholder-slate-600 focus:outline-none" />
-                                  {sh.balP > 0 && (
-                                    <button type="button" onClick={() => setFPaid(numIn(sh.balP))}
-                                      className="ml-1 mt-1.5 rounded-full bg-emerald-400/10 px-3 py-1.5 text-[11px] font-extrabold text-emerald-300 transition active:scale-95">
-                                      Poona balance {fmtMoney(sh.balP)} — ek tap me bhar do
-                                    </button>
-                                  )}
+                                </div>
+                                <div className="flex gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <label className="mb-1 block px-1 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-500">GR ₹ (optional)</label>
+                                    <input value={fGr} onChange={(ev) => setFGr(ev.target.value)} inputMode="decimal" placeholder="0"
+                                      className="glass-inset w-full rounded-xl px-3 py-2.5 text-[14px] font-extrabold tabular-nums text-white placeholder-slate-600 focus:outline-none" />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <label className="mb-1 block px-1 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-500">Less ₹ (optional)</label>
+                                    <input value={fLess} onChange={(ev) => setFLess(ev.target.value)} inputMode="decimal" placeholder="0"
+                                      className="glass-inset w-full rounded-xl px-3 py-2.5 text-[14px] font-extrabold tabular-nums text-white placeholder-slate-600 focus:outline-none" />
+                                  </div>
                                 </div>
                                 <div className="flex gap-2">
                                   {MODES.map((m) => (
@@ -481,27 +441,6 @@ export default function TourHisabScreen({
                                       {m.label}
                                     </button>
                                   ))}
-                                </div>
-                                <div>
-                                  <button type="button" onClick={() => setShowGrLess((v) => !v)}
-                                    className="flex items-center gap-1 px-1 text-[11.5px] font-extrabold text-slate-400">
-                                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showGrLess ? 'rotate-180' : ''}`} />
-                                    GR ya Less bhi hai? (optional)
-                                  </button>
-                                  {showGrLess && (
-                                    <div className="mt-2 flex gap-2">
-                                      <div className="min-w-0 flex-1">
-                                        <label className="mb-1 block px-1 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-500">GR (R.Goods ₹)</label>
-                                        <input value={fGr} onChange={(ev) => setFGr(ev.target.value)} inputMode="decimal" placeholder="0"
-                                          className="glass-inset w-full rounded-xl p-3 text-[15px] font-extrabold tabular-nums text-white placeholder-slate-600 focus:outline-none" />
-                                      </div>
-                                      <div className="min-w-0 flex-1">
-                                        <label className="mb-1 block px-1 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-500">Less ₹</label>
-                                        <input value={fLess} onChange={(ev) => setFLess(ev.target.value)} inputMode="decimal" placeholder="0"
-                                          className="glass-inset w-full rounded-xl p-3 text-[15px] font-extrabold tabular-nums text-white placeholder-slate-600 focus:outline-none" />
-                                      </div>
-                                    </div>
-                                  )}
                                 </div>
                                 <input value={fNote} onChange={(ev) => setFNote(ev.target.value)} placeholder="Note (optional — jaise cheque no.)"
                                   className="glass-inset w-full rounded-xl p-3 text-[13px] text-white placeholder-slate-500 focus:outline-none" />
