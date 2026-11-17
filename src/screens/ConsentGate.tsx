@@ -5,27 +5,26 @@ import { Capacitor } from '@capacitor/core';
 import { db } from '../firebase';
 import { LocationGuard, PermStatus } from '../lib/locationGuard';
 import { diagLog } from '../lib/diag';
-import PrivacyPolicy from './PrivacyPolicy';
+import PrivacyPolicy, { POLICY_VERSION } from './PrivacyPolicy';
 
 // ============================================================
-// CONSENT GATE (Boss order 2026-11-17: "App installed hote staff manager
-// aur sales role ko SARE permissions EK HI dialog me dikhna chahiye —
-// usme sirf permission ka zikr, niche privacy policy ka link, ek check-mark
-// ke terms & conditions wo manta hai aur uska data use karne ki hume
-// permission hai kyunki wo hamare yaha kaam karta hai. Permission dete
-// waqt wo policy padh bhi sakta hai.")
+// CONSENT GATE (Boss order 2026-11-17, v2 feedback: "Itna sara heavy
+// dikhane ki zaroorat nahi — bas zaroori permission jaise notifications aur
+// location dikha, baaki Terms & Conditions ke andar likh do ki kya-kya
+// permission li gayi hai. Sab kuch short aur ENGLISH me likho.")
 //
-// FLOW: login -> ConsentGate (ek dialog: permission list + policy link +
-// checkbox) -> Accept -> WIZARD (Android ke system prompts ek-ek karke —
-// ye Android ka rule hai, ek hi system dialog me nahi aa sakte) -> gate -> Home.
+// FLOW: login -> CONSENT DIALOG (sirf 2 cards: Location + Notifications;
+// baaki permissions T&C text ke andar; privacy policy link; checkbox; accept)
+// -> WIZARD (Android system prompts ek-ek karke — Android ka rule, system
+// dialogs combine nahi hote) -> LOCATION GATE -> Home.
 //
 // Rules:
-//  - Accept ke BINA app aage nahi badhti (checkbox ke bina Accept band).
-//  - Consent Firestore 'consents/{uid}' me record (policyVersion ke saath)
-//    — offline ho to local pending flag, agli baar online hote hi write.
+//  - Accept ke bina app aage nahi badhti (checkbox ke bina Accept band).
+//  - Consent Firestore 'consents/{uid}' me record — offline par pending flag,
+//    agli open par silent retry.
 //  - Ek baar accept -> localStorage flag -> boot par SKIP (smooth, Boss rule).
-//  - Wizard me koi permission reh jaye to bhi aage ja sakte ho (baad me
-//    settings se dena) — sirf location LocationGate khud enforce karta hai.
+//  - Wizard me permission reh jaye to bhi aage ja sakte ho (baad me settings
+//    se dena) — sirf location LocationGate khud enforce karta hai.
 // ============================================================
 
 const consentKey = (uid: string) => `shivam_consent_v1_${uid}`;
@@ -38,13 +37,12 @@ interface ConsentGateProps {
 
 type Phase = 'consent' | 'wizard' | 'policy' | 'pass';
 
-// Ek permission-row ka model: status wizard me poll se aata hai
+// Wizard rows (full list — Android prompts inhi ke against aate hain)
 interface PermRow {
   id: keyof PermStatus;
   title: string;
   why: string;
   optional?: boolean;
-  // status false par kaunsa action button dikhana hai
   action?: 'request' | 'settings' | 'battery' | 'usage';
 }
 
@@ -63,38 +61,38 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
 
   const isSales = profile.role === 'sales';
   const isWorker = profile.role === 'worker';
-  const isStaffLike = isSales || isWorker; // usage-access wali rows inhi ke liye
+  const isStaffLike = isSales || isWorker; // usage-access row inhi ke liye
 
-  // ---------- Permission rows (role-wise) ----------
+  // ---------- Wizard rows (dialog par sirf pehli 2 dikhti hain — Boss v2) ----------
   const rows: PermRow[] = [
     {
       id: 'fineLocation',
-      title: 'Location (GPS + network)',
-      why: 'Dukan ke 100 meter ka gate, tour tracking, duty ka pata — bina location app nahi khulti',
+      title: 'Location (GPS)',
+      why: 'Shop check-in and duty tracking',
       action: 'request',
     },
     {
       id: 'notifications',
-      title: 'Notification',
-      why: 'Duty aur alerts ki jankari phone par dikhe',
+      title: 'Notifications',
+      why: 'Duty and alert messages',
       action: 'request',
     },
     {
       id: 'motion',
       title: 'Motion (Activity recognition)',
-      why: 'Chalne ka signal — GPS bewajah on na ho, battery bache',
+      why: 'Keeps GPS off when you are still — saves battery',
       action: 'request',
     },
     {
       id: 'backgroundLocation',
       title: 'Background location (Allow all the time)',
-      why: 'App band ho to bhi duty ka trail ban sake — settings se "Allow all the time" karna hai',
+      why: 'Duty trail keeps recording when the app is closed',
       action: 'settings',
     },
     {
       id: 'batteryExempt',
       title: 'Battery optimization exempt',
-      why: 'Phone ka battery-saver tracking band na kar sake',
+      why: 'Phone battery-saver cannot stop tracking',
       action: 'battery',
     },
     ...(isStaffLike
@@ -102,7 +100,7 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
           {
             id: 'usageAccess' as keyof PermStatus,
             title: 'App usage access (optional)',
-            why: 'Dukan par kaun si app kitni der khuli rahi — sirf minutes ka total, screen content kabhi nahi. Bahar ka time track nahi hota',
+            why: 'Minutes only — screen content is never read. Shop time only',
             optional: true,
             action: 'usage' as const,
           },
@@ -138,7 +136,8 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
     } catch {
       /* ignore */
     }
-  }, [profile.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile.uid]);
 
   useEffect(() => {
     if (phase === 'pass') flushPendingConsent();
@@ -167,26 +166,22 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
     return (
       <PrivacyPolicy
         onBack={() => setPhase(agree ? 'wizard' : 'consent')}
-        backLabel={agree ? 'Permissions par wapas' : 'Consent par wapas'}
+        backLabel={agree ? 'Back to permissions' : 'Back'}
       />
     );
   }
 
   // ---------- WIZARD (system prompts ek-ek karke) ----------
   if (phase === 'wizard') {
-    const allRequiredOk = status ? !!status.fineLocation : null;
     const pending = rows.filter((r) => !r.optional && status && !status[r.id]);
     return (
       <div className="relative flex min-h-[86vh] items-center justify-center px-5 py-6 text-slate-100">
         <div className="ambient-orb -top-10 -right-14 h-56 w-56 bg-indigo-500/15" />
         <div className="glass-card relative z-10 w-full max-w-md rounded-[26px] px-5 py-7">
-          <h1 className="text-[19px] font-extrabold tracking-tight text-white">
-            Permissions do
-          </h1>
+          <h1 className="text-[19px] font-extrabold tracking-tight text-white">Allow permissions</h1>
           <p className="mt-1.5 text-[12.5px] leading-relaxed text-slate-400">
-            Android har permission ka apna popup dikhata hai (ek-ek karke). Har
-            popup par <span className="font-semibold text-slate-200">Allow</span>{' '}
-            dabao — main app check karti rahegi.
+            Android shows its own popup for each permission. Tap{' '}
+            <span className="font-semibold text-slate-200">Allow</span> on each one.
           </p>
 
           <div className="mt-4 space-y-2.5">
@@ -237,7 +232,7 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
                       }}
                       className="shrink-0 rounded-xl bg-indigo-500/25 px-3 py-2 text-[11.5px] font-bold text-indigo-200 active:scale-95"
                     >
-                      {r.action === 'request' ? 'Den do' : 'Settings'}
+                      {r.action === 'request' ? 'Allow' : 'Settings'}
                     </button>
                   ) : null}
                 </div>
@@ -255,29 +250,29 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
             }}
             className="mt-4 w-full rounded-2xl bg-indigo-500 py-4 text-[15px] font-bold text-white active:scale-[0.98]"
           >
-            Sab permissions do
+            Allow all permissions
           </button>
 
           <p className="mt-2.5 text-[11px] leading-relaxed text-slate-500">
             {status === null
-              ? 'Permission status check ho raha hai...'
+              ? 'Checking permission status...'
               : pending.length === 0
-                ? 'Sab main permissions mil gayi — aage badho.'
-                : `${pending.length} permission baki hai — abhi skip karoge to baad me bhi de sakte ho.`}
+                ? 'All main permissions granted.'
+                : `${pending.length} pending — you can allow them later.`}
           </p>
 
           <button
             onClick={() => setPhase('pass')}
             className="mt-3 w-full rounded-2xl bg-slate-700/70 py-3.5 text-[13.5px] font-bold text-slate-200 active:scale-[0.98]"
           >
-            {allRequiredOk === false ? 'Aage badho (location baad me)' : 'Aage badho'}
+            Continue
           </button>
         </div>
       </div>
     );
   }
 
-  // ---------- CONSENT (ek hi dialog — Boss ka order) ----------
+  // ---------- CONSENT (ek hi dialog — Boss v2: light, English) ----------
   return (
     <div className="relative flex min-h-[86vh] items-center justify-center px-5 py-6 text-slate-100">
       <div className="ambient-orb -top-10 -right-14 h-56 w-56 bg-indigo-500/15" />
@@ -286,30 +281,29 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
           Permissions &amp; Privacy
         </h1>
         <p className="mt-1.5 text-center text-[12px] text-slate-400">
-          {profile.name} — ye app chalane ke liye ye permissions chahiye
+          This app needs these permissions
         </p>
 
         <div className="mt-4 space-y-2">
-          {rows.map((r) => (
-            <div key={r.id} className="rounded-2xl bg-slate-800/50 px-3.5 py-3">
-              <p className="text-[13.5px] font-semibold text-slate-100">
-                {r.title}
-                {r.optional ? (
-                  <span className="ml-1.5 rounded-full bg-slate-600/40 px-2 py-0.5 text-[10px] font-bold text-slate-300">
-                    OPTIONAL
-                  </span>
-                ) : null}
-              </p>
-              <p className="mt-0.5 text-[11.5px] leading-snug text-slate-400">{r.why}</p>
-            </div>
-          ))}
+          <div className="rounded-2xl bg-slate-800/50 px-3.5 py-3">
+            <p className="text-[13.5px] font-semibold text-slate-100">Location access (GPS)</p>
+            <p className="mt-0.5 text-[11.5px] leading-snug text-slate-400">
+              Shop check-in, duty tracking and tour records
+            </p>
+          </div>
+          <div className="rounded-2xl bg-slate-800/50 px-3.5 py-3">
+            <p className="text-[13.5px] font-semibold text-slate-100">Notifications</p>
+            <p className="mt-0.5 text-[11.5px] leading-snug text-slate-400">
+              Duty and alert messages
+            </p>
+          </div>
         </div>
 
         <button
           onClick={() => setPhase('policy')}
           className="mt-3.5 w-full rounded-2xl border border-indigo-400/30 bg-indigo-500/10 py-3 text-[13px] font-bold text-indigo-200 active:scale-[0.98]"
         >
-          Privacy Policy padho — kya data, kyun, kya nahi
+          Read Privacy Policy
         </button>
 
         <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl bg-slate-800/60 px-4 py-3.5">
@@ -320,12 +314,11 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
             className="mt-0.5 h-5 w-5 shrink-0 rounded accent-indigo-500"
           />
           <span className="text-[12.5px] leading-relaxed text-slate-300">
-            Main <span className="font-semibold text-slate-100">Terms &amp; Conditions</span>{' '}
-            manta/manti hoon aur Privacy Policy padh li hai. Company ko mere
-            upar-likhe data (location, duty, hisab, app-usage ke totals) ka use
-            karne ki permission hai —{' '}
-            <span className="font-semibold text-slate-100">kyunki main yahan
-            kaam karta/karti hoon</span>.
+            <span className="font-semibold text-slate-100">Terms &amp; Conditions:</span> I
+            accept them. The app also uses background location, motion detection,
+            battery-optimization exemption and app usage time (shop staff, shop time only) —
+            all listed in the Privacy Policy. The company may use my work data for duty,
+            accounts and alerts, because I work here.
           </span>
         </label>
 
@@ -338,11 +331,11 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
               : 'cursor-not-allowed bg-slate-700/60 text-slate-500'
           }`}
         >
-          {saving ? 'Save ho raha hai...' : 'Main manta hoon — aage badho'}
+          {saving ? 'Saving...' : 'I Agree — Continue'}
         </button>
         {!agree ? (
           <p className="mt-2 text-center text-[11px] text-slate-500">
-            Checkbox tick karne ke baad hi aage badh sakte ho
+            Tick the checkbox to continue
           </p>
         ) : null}
       </div>
@@ -363,7 +356,7 @@ function writeConsentDoc(
     name: profile.name,
     mobile: profile.mobile || '',
     role: profile.role,
-    policyVersion: 1,
+    policyVersion: POLICY_VERSION,
     acceptedAt: Date.now(),
     userAgent: navigator.userAgent.slice(0, 180),
   };
