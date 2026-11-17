@@ -11,7 +11,6 @@ import android.telephony.CellInfoTdscdma;
 import android.telephony.CellInfoWcdma;
 import android.telephony.CellLocation;
 import android.telephony.CellSignalStrength;
-import android.telephony.GsmCellLocation;
 import android.telephony.TelephonyManager;
 
 import org.json.JSONObject;
@@ -117,20 +116,27 @@ public final class CellTowerWatcher {
             }
 
             // ---- 3) FALLBACK: getCellLocation (deprecated par kaam karta hai) ----
+            // API 36 (compileSdk) se android.telephony.GsmCellLocation REMOVE ho
+            // gaya hai (package move) — isliye REFLECTION use karte hain:
+            // compile-time class dependency ZERO, runtime par jo bhi concrete
+            // impl mile (android.telephony.GsmCellLocation ya
+            // android.telephony.gsm.GsmCellLocation) dono par getLac/getCid
+            // chal jata hai. CDMA impl par getLac nahi hota = skip (India
+            // GSM/LTE network — acceptable).
             if (s.cid < 0) {
                 try {
                     CellLocation cl = tm.getCellLocation();
-                    if (cl instanceof GsmCellLocation) {
-                        GsmCellLocation g = (GsmCellLocation) cl;
-                        int lac = g.getLac();
-                        int cid = g.getCid();
-                        if (lac >= 0 && cid > 0) {
+                    if (cl != null) {
+                        Integer lac = (Integer) cl.getClass().getMethod("getLac").invoke(cl);
+                        Integer cid = (Integer) cl.getClass().getMethod("getCid").invoke(cl);
+                        if (lac != null && cid != null && lac >= 0 && cid > 0) {
                             s.lac = lac;
-                            s.cid = cid & 0xFFFF; // 16-bit GSM cid
+                            s.cid = cid; // GSM 16-bit / UMTS 28-bit — jaisa hai waisa (CellIdentity path se consistent)
                             s.ok = true;
                         }
                     }
-                } catch (Exception ignore) {
+                } catch (Throwable ignore) {
+                    // NoSuchMethod/Access/Invocation — fallback fail to bhi OK
                 }
             }
 
