@@ -15,6 +15,7 @@ import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
 import LocationGate from './screens/LocationGate';
+import ConsentGate from './screens/ConsentGate';
 import UpdatePopup from './components/UpdatePopup';
 import IntroScreen from './components/IntroScreen';
 import BrandHeader from './components/BrandHeader';
@@ -430,13 +431,19 @@ export default function App() {
             />
           ) : (
             <div className="text-slate-100 font-sans selection:bg-amber-500/30">
-              {/* LOCATION GATE (Boss order 2026-10-26): staff ko app open hote hi
-                  sab se pehle location permission + 100m shop-radius check —
-                  bahar = locked screen, andar = open + auto duty ON.
-                  Manager kahin se bhi open (gate skip, tracking chalti hai). */}
-              <LocationGate profile={profile}>
-                {() => <HomeScreen profile={profile} onLogout={handleLogout} />}
-              </LocationGate>
+              {/* CONSENT GATE (Boss order 2026-11-17): login ke turant baad EK
+                  dialog — sare permissions ka zikr (role ke hisab se) + privacy
+                  policy ka link (permission dete waqt padh sakte ho) + T&C/data-use
+                  checkbox. Accept ke baad wizard Android ke system prompts
+                  ek-ek karke deta hai, phir niche wala LOCATION GATE chalta hai.
+                  Ek baar accept -> boot par skip (localStorage, smooth open). */}
+              <ConsentGate profile={profile}>
+                {() => (
+                  <LocationGate profile={profile}>
+                    {() => <HomeScreen profile={profile} onLogout={handleLogout} />}
+                  </LocationGate>
+                )}
+              </ConsentGate>
             </div>
           )}
         </main>

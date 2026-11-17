@@ -2,6 +2,7 @@ package com.shivam.staff;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AppOpsManager;
 import android.app.Application;
 import android.content.Context;
 import android.content.BroadcastReceiver;
@@ -292,6 +293,183 @@ public class LocationGuardPlugin extends Plugin {
             ret.put("key", "");
             call.resolve(ret);
         }
+    }
+
+    // ================= CONSENT WIZARD (Boss order 2026-11-17) =================
+    // Ek consent dialog ke baad wizard har permission ka STATUS dikhata hai
+    // (2.5s poll) aur guided request bhejta hai. Background-location + battery
+    // + usage-access Android ke alag flows hain — sabki alag method.
+
+    /**
+     * Sab permission ka on/off snapshot — wizard ke ticks isse bante hain.
+     * KABHI throw nahi karta (fail par sab false + error field).
+     */
+    @PluginMethod
+    public void permStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            Context app = getContext().getApplicationContext();
+            boolean fine = ContextCompat.checkSelfPermission(app,
+                    Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            boolean coarse = ContextCompat.checkSelfPermission(app,
+                    Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            boolean bg = true; // API <29 par alag permission hi nahi hoti
+            if (Build.VERSION.SDK_INT >= 29) {
+                bg = ContextCompat.checkSelfPermission(app,
+                        Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            }
+            boolean notif = true; // API <33 par runtime permission hi nahi hoti
+            if (Build.VERSION.SDK_INT >= 33) {
+                notif = ContextCompat.checkSelfPermission(app,
+                        Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+            }
+            boolean motion = true;
+            if (Build.VERSION.SDK_INT >= 29) {
+                motion = ContextCompat.checkSelfPermission(app,
+                        Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED;
+            }
+            boolean batt = false;
+            try {
+                PowerManager pm = (PowerManager) app.getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    batt = pm.isIgnoringBatteryOptimizations(app.getPackageName());
+                }
+            } catch (Exception ignore) {
+            }
+            boolean usage = false;
+            try {
+                AppOpsManager ops = (AppOpsManager) app.getSystemService(Context.APP_OPS_SERVICE);
+                if (ops != null) {
+                    int mode = ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS,
+                            android.os.Process.myUid(), app.getPackageName());
+                    usage = mode == AppOpsManager.MODE_ALLOWED;
+                }
+            } catch (Exception ignore) {
+            }
+            ret.put("fineLocation", fine);
+            ret.put("coarseLocation", coarse);
+            ret.put("backgroundLocation", bg);
+            ret.put("notifications", notif);
+            ret.put("motion", motion);
+            ret.put("batteryExempt", batt);
+            ret.put("usageAccess", usage);
+        } catch (Exception e) {
+            ret.put("error", String.valueOf(e.getMessage()));
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * System permission prompts EK SAATH queue: location (fine+coarse) +
+     * notification (33+) + motion (29+). Background-location jaan-boojh kar
+     * YAHAN NAHI hai — Android 11+ par saath me maangne par system chup-chaap
+     * deny karta hai; wo settings se "Allow all the time" karna padta hai
+     * (wizard openAppSettings() guide karta hai).
+     */
+    @PluginMethod
+    public void requestPermissions(PluginCall call) {
+        try {
+            Activity act = getActivity();
+            if (act == null) {
+                call.resolve();
+                return;
+            }
+            java.util.List<String> want = new java.util.ArrayList<>();
+            if (ContextCompat.checkSelfPermission(act, Manifest.permission.ACCESS_FINE_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                want.add(Manifest.permission.ACCESS_FINE_LOCATION);
+                want.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+            }
+            if (Build.VERSION.SDK_INT >= 33
+                    && ContextCompat.checkSelfPermission(act, Manifest.permission.POST_NOTIFICATIONS)
+                            != PackageManager.PERMISSION_GRANTED) {
+                want.add(Manifest.permission.POST_NOTIFICATIONS);
+            }
+            if (Build.VERSION.SDK_INT >= 29
+                    && ContextCompat.checkSelfPermission(act, Manifest.permission.ACTIVITY_RECOGNITION)
+                            != PackageManager.PERMISSION_GRANTED) {
+                want.add(Manifest.permission.ACTIVITY_RECOGNITION);
+            }
+            if (!want.isEmpty()) {
+                ActivityCompat.requestPermissions(act,
+                        want.toArray(new String[0]), 9105);
+            }
+            JSObject ret = new JSObject();
+            ret.put("requested", want.size());
+            call.resolve(ret);
+        } catch (Exception e) {
+            JSObject ret = new JSObject();
+            ret.put("requested", 0);
+            call.resolve(ret);
+        }
+    }
+
+    /**
+     * Battery-optimization exemption ka system dialog ( wizard battery step).
+     * Pehle se exempt ho to asked=false.
+     */
+    @PluginMethod
+    public void requestBatteryExemption(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            Activity act = getActivity();
+            if (act == null) {
+                ret.put("asked", false);
+                call.resolve(ret);
+                return;
+            }
+            PowerManager pm = (PowerManager) act.getSystemService(Context.POWER_SERVICE);
+            if (pm != null && pm.isIgnoringBatteryOptimizations(act.getPackageName())) {
+                ret.put("asked", false);
+                call.resolve(ret);
+                return;
+            }
+            requestBatteryExemptionBestEffort(act);
+            ret.put("asked", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            ret.put("asked", false);
+            call.resolve(ret);
+        }
+    }
+
+    /**
+     * Usage-access (special app access) settings screen kholti hai — OPTIONAL
+     * step (worker/sales ke app-usage totals ke liye). Yahan koi runtime dialog
+     * nahi aata, user khud toggle karta hai; status permStatus() me aata hai.
+     */
+    @PluginMethod
+    public void requestUsageAccess(PluginCall call) {
+        try {
+            Activity act = getActivity();
+            if (act != null) {
+                Intent i = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                act.startActivity(i);
+            }
+        } catch (Exception ignore) {
+            // OEM block — optional feature hai, chup rehna theek hai
+        }
+        call.resolve();
+    }
+
+    /**
+     * App ki system settings page (background-location "Allow all the time"
+     * yahi se hota hai — Android 11+ in-app prompt ko chup-chaap deny karta hai).
+     */
+    @PluginMethod
+    public void openAppSettings(PluginCall call) {
+        try {
+            Activity act = getActivity();
+            if (act != null) {
+                Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + act.getPackageName()));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                act.startActivity(i);
+            }
+        } catch (Exception ignore) {
+        }
+        call.resolve();
     }
 
     private void requestPermissionsBestEffort(Activity act) {

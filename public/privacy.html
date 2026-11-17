@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy Policy — Shivam Staff App</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; background: #0b1120; color: #cbd5e1;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+    line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 680px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { color: #fff; font-size: 24px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .meta { color: #64748b; font-size: 12.5px; margin-bottom: 22px; }
+  h2 { color: #fff; font-size: 16px; margin: 26px 0 8px; }
+  p { margin: 8px 0; font-size: 14px; }
+  ul { margin: 6px 0 10px; padding-left: 0; list-style: none; }
+  li { font-size: 14px; margin: 7px 0; padding-left: 18px; position: relative; }
+  li::before { content: '•'; color: #818cf8; position: absolute; left: 2px; }
+  .card {
+    background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(99, 102, 241, 0.18);
+    border-radius: 18px; padding: 18px 18px 8px; margin-top: 18px;
+  }
+  .note { background: rgba(30, 41, 59, 0.6); border-radius: 14px; padding: 12px 14px; font-size: 12.5px; color: #94a3b8; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Privacy Policy</h1>
+  <div class="meta">Version 1 — 17 November 2026 — Shivam Staff App</div>
+
+  <div class="card">
+    <h2>1. Ye policy kis baare me hai</h2>
+    <p>
+      Ye app (Shivam Staff App) dukan/company ke kaam ke liye hai — attendance,
+      duty, tour tracking, hisab aur alerts. Ye policy saaf-saaf batati hai ki
+      app aapka kya data leta hai, kyun leta hai, kahan rakhta hai, aur kya
+      KABHI nahi leta. Data collect karne ka base aapka employment hai — aap
+      company ke liye kaam karte ho, isliye kaam se juda data company rakhti
+      hai (app me consent dialog me iski manzoori tick karke di jati hai).
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>2. Kya data collect hota hai</h2>
+    <ul>
+      <li>Account: naam, mobile number, role (worker / sales / manager), kaam ki city.</li>
+      <li>Location: GPS aur network se aapki position — dukan/tour tracking, app-open gate (dukan ke 100 meter area ka check).</li>
+      <li>Mobile tower info: kis tower se phone juda hai (tower id — mcc-mnc-lac-cid), signal, aur usi se andaza ki city kaunsi hai. Ye GPS ke bina bhi chalta hai taaki internet/location band hone par bhi pata rahe.</li>
+      <li>Battery: battery % aur charging on/off — taaki pata chale tracking ruki to phone band thi ya kuch aur.</li>
+      <li>Motion hint (chalne/haath hilne ka sensor signal) — sirf battery bachane ke liye, GPS bewajah on na ho.</li>
+      <li>Duty punches: aane/jaane ka time, tour me mile visit log (kahan kitni der ruke), sales ka hisab (bills, diye paise, note) — ye business record hai.</li>
+      <li>App usage (sirf worker aur sales, sirf dukan ke time): kaun si app kitni der khuli rahi — sirf MINUTES ka total. Screen ka content, aapki chats, photos — kuch nahi dekha jata.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>3. Kya KABHI collect nahi hota</h2>
+    <ul>
+      <li>Aapki photos, videos, files, contacts — kabhi nahi.</li>
+      <li>Aapke messages, WhatsApp ki chats, calls ki recording — kabhi nahi.</li>
+      <li>Browser me kya dekha — nahi (sirf "Chrome 1h 10m" jaisa total time, wo bhi sirf dukan ke time).</li>
+      <li>Dukan se bahar ka app usage — nahi. Personal time track nahi hota.</li>
+      <li>Microphone/camera — kabhi on nahi hote.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>4. Data kahan jata hai aur kaun dekhta hai</h2>
+    <p>
+      Data company ke Google Firebase (Google Cloud) account par store hota
+      hai. Ye dekh sakta hai: sirf management/boss (manager dashboard) —
+      presence, tour, alerts aur hisab ke records. Koi teesri company ko becha
+      nahi jata, advertising use nahi hota.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>5. Permission kyun chahiye</h2>
+    <ul>
+      <li>Location (foreground + background): app khulne par gate + dukan par presence + tour tracking. Background taaki app band ho to bhi trail bane (boss ka order: app khule ya na khule, duty ka pata chale).</li>
+      <li>Notification: duty/alerts ki jankari, tracking chalu hone ki soochi.</li>
+      <li>Motion (Activity recognition): chalne ka signal mile to GPS turant on ho, khade rehne par band rahe — battery bachat hai.</li>
+      <li>Battery optimization exemption: phone ka battery-saver tracking ko na roke.</li>
+      <li>Usage access (optional, worker/sales): upar likhe app-usage totals ke liye — ye Android ka apna record hai, hum bas minutes padhte hain.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>6. Fake GPS / location game</h2>
+    <p>
+      Agar koi fake-location app se galat jagah bhejne ki koshish ho, app usko
+      pakad kar record karti hai (mock flag, GPS vs tower mismatch). Ye record
+      sirf management dikh sakta hai.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>7. Data kitne din rakha jata hai</h2>
+    <p>
+      Jab tak aap company me kaam karte ho. Kaam khatam hone par management
+      apni policy se records rakh/saf kar sakti hai. Data delete karane ki
+      request seedhe management ko do.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>8. Consent aur usko hatana</h2>
+    <p>
+      Pehli baar app kholte hi permissions + ye policy dikhti hai — checkbox
+      tick karne par aap terms &amp; conditions aur data-use ki manzoori dete
+      ho (kyunki aap company ke liye kaam karte ho). Permission phone settings
+      se band kar do to app ke tracking wale features bhi band ho jate hain
+      (app ye khud pakad leti hai). Koi sawal ho to seedhe management/dukan
+      malik se baat karo.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>9. Policy badalne par</h2>
+    <p>
+      Naya data collect karne se pehle policy update hoga aur app me dobara
+      consent dialog aa sakta hai. Is page par hamesha latest version aur date
+      likhi hoti hai (abhi: version 1, 17 November 2026).
+    </p>
+  </div>
+
+  <div class="note">
+    Ye policy app ke andar bhi hai (offline bhi khulti hai) aur is hosted page
+    se same hai. Koi confusion ho to management se puchho — likha sab kuch wahi
+    hai jo app asal me karta hai.
+  </div>
+</div>
+</body>
+</html>

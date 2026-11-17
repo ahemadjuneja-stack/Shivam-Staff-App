@@ -42,6 +42,19 @@ export interface CellTowerRecord {
   updatedAt?: number;
 }
 
+// CONSENT WIZARD (Boss order 2026-11-17): har permission ka on/off status —
+// ConsentGate wizard isse ticks dikhata hai (2.5s poll).
+export interface PermStatus {
+  fineLocation: boolean; // ACCESS_FINE_LOCATION granted
+  coarseLocation: boolean;
+  backgroundLocation: boolean; // "Allow all the time" (API 29+; niche par true)
+  notifications: boolean; // API 33+ par real check, niche par true
+  motion: boolean; // ACTIVITY_RECOGNITION (API 29+; niche par true)
+  batteryExempt: boolean; // isIgnoringBatteryOptimizations
+  usageAccess: boolean; // AppOps OPSTR_GET_USAGE_STATS (optional feature)
+  error?: string;
+}
+
 export interface LocationGuardPluginDef {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -63,6 +76,14 @@ export interface LocationGuardPluginDef {
   pushCellDb(opts: { towers: CellTowerRecord[] }): Promise<{ merged?: number }>;
   // Current serving tower (diagnostics — gate/dashboard display)
   getCellInfo(): Promise<CellTowerInfo>;
+  // CONSENT WIZARD (Boss 2026-11-17): permission status + guided requests.
+  // Background-location aur battery Android me alag flow hain (settings se
+  // karna padta hai) — isliye alag methods, wizard par-par dikhata hai.
+  permStatus(): Promise<PermStatus>;
+  requestPermissions(): Promise<{ requested: number }>;
+  requestBatteryExemption(): Promise<{ asked: boolean }>;
+  requestUsageAccess(): Promise<void>;
+  openAppSettings(): Promise<void>;
   addListener(
     eventName: 'locationStateChanged',
     listenerFunc: (data: { enabled: boolean }) => void
