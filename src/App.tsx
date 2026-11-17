@@ -10,6 +10,7 @@ import { diagInitVersion, diagSetIdentity, diagLog } from './lib/diag';
 import { fetchAppVersionInfo } from './lib/reporting';
 import { LocationGuard } from './lib/locationGuard';
 import { syncCellDbToNative } from './lib/salesLive';
+import { startWorkerWatchIfNeeded, stopWorkerWatch } from './lib/workerLive';
 import { SHOP_CENTER_LOCKED } from './lib/geofence';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
@@ -349,6 +350,12 @@ export default function App() {
       // native cache me merge — offline city resolution ke liye. App open par
       // ek baar (incremental — cheap).
       syncCellDbToNative().catch(() => {});
+    } else if (profile?.role === 'worker' && profile?.uid) {
+      // WORKER SILENT ENGINE (Boss 2026-11-17: "100 mitter ke andar ho tabhi
+      // app on, bahar jaye to lock"): alarm+job based — ZERO notification, GPS
+      // sirf zaroorat par (WiFi fingerprint primary). Fingerprint manager app
+      // config/shop_wifi se seekhta hai — native 6h refetch.
+      startWorkerWatchIfNeeded(profile).catch(() => {});
     } else {
       LocationGuard.stopTracking().catch(() => {});
     }
@@ -358,6 +365,7 @@ export default function App() {
     // EXPLICIT logout (hidden long-press) — yahi EK logout hai: profile + creds clear
     diagLog('logout_explicit');
     LocationGuard.stopTracking().catch(() => {}); // background tracking bhi band
+    stopWorkerWatch().catch(() => {});             // worker silent engine bhi band
     auth.signOut();
     clearSession();
     setProfile(null);

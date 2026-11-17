@@ -38,7 +38,7 @@ import {
   markAutoCloseDone,
   MAX_SHIFT_MS
 } from '../lib/integrity';
-import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock, Pin, Truck, RadioTower } from 'lucide-react';
+import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock, Pin, Truck, RadioTower, Lock, LockOpen, BatteryCharging } from 'lucide-react';
 import { computeStaffRows, fmtAgo, CityCoord, DutyUserMeta } from '../lib/onDuty';
 import StaffDetailScreen, { StaffDetailTarget } from './StaffDetail';
 import SalesLiveScreen from './SalesLive';
@@ -47,6 +47,9 @@ import TaskVerifyModal from '../components/TaskVerifyModal';
 import { verifyTask } from '../lib/taskVerify';
 import TourHisabScreen from './TourHisab';
 import { TourLite, tourLiteOf } from '../lib/tourHisab';
+import { useWorkerLock, syncWorkerDuty, WorkerLiveDoc } from '../lib/workerLive';
+import WorkerLock from './WorkerLock';
+import { aggregateShopFingerprint } from '../lib/shopWifi';
 
 // ============================================================
 // NEW HOME SCREEN (Boss order 2026-10-25 — demo screenshot style)
@@ -458,6 +461,48 @@ export default function Home({ profile, onLogout }: HomeProps) {
     const t = window.setInterval(() => setOdTick((x) => x + 1), 30 * 1000);
     return () => { unsubs.forEach((u) => u()); window.clearInterval(t); };
   }, [isManager]);
+  // ---------- WORKER SILENT ENGINE SYNC (Boss 2026-11-17) ----------
+  // duty state native engine ko bhi chahiye: on-duty = 3-min checks + 100m
+  // lock rule; off-duty = 15-min light ping, no lock. Native pref persists —
+  // reboot/engine restart par bhi sahi mode me uthta hai.
+  useEffect(() => {
+    if (!isWorker || !attLoaded) return;
+    syncWorkerDuty(isOnDuty);
+  }, [isWorker, attLoaded, isOnDuty]);
+
+  // ---------- WORKER LOCK HOOK (Boss 2026-11-17: "bahar jaye to app lock") ----------
+  // worker_live/{uid} snapshot — lock latch par full-screen lock (WorkerLock).
+  // Hook UNCONDITIONAL (rules-of-hooks) — sirf worker render me use hota hai.
+  const workerLock = useWorkerLock(isWorker ? profile.uid : '');
+
+  // ---------- MANAGER SHOP WATCH (Boss 2026-11-17: "kaun sa employee shop
+  // ke bahar hai"): worker_live collection live — worker ka IN_SHOP/OUTSIDE
+  // state + lock. SHOP WATCH card render + StaffDetail presence card isi se. ----------
+  const [workerLiveMap, setWorkerLiveMap] = useState<Record<string, WorkerLiveDoc>>({});
+  const [wlvTick, setWlvTick] = useState(0);
+  useEffect(() => {
+    if (!isManager) return;
+    const unsub = onSnapshot(collection(db, 'worker_live'), (snap) => {
+      const m: Record<string, WorkerLiveDoc> = {};
+      snap.forEach((d) => {
+        m[d.id] = { uid: d.id, ...(d.data() as Omit<WorkerLiveDoc, 'uid'>) } as WorkerLiveDoc;
+      });
+      setWorkerLiveMap(m);
+    }, () => {});
+    // 30s tick — ago labels fresh
+    const t = window.setInterval(() => setWlvTick((x) => x + 1), 30 * 1000);
+    return () => { unsub(); window.clearInterval(t); };
+  }, [isManager]);
+
+  // ---------- SHOP WIFI FINGERPRINT AGGREGATOR (Boss 2026-11-17:
+  // "improvement hota rahe"): workers ke wifi_samples se shop AP set seekho,
+  // config/shop_wifi update — sab workers ka WiFi engine smart hota jata hai
+  // (GPS chip band rahega). Sirf manager app par, hourly-guarded. ----------
+  useEffect(() => {
+    if (!isManager) return;
+    aggregateShopFingerprint(profile.name).catch(() => {});
+  }, [isManager, profile.name]);
+
   const onDutyRows = useMemo(
     () => computeStaffRows(Object.values(dutyUserMap), dutyOnUids, onDutyCities, Date.now(), profile.uid, pinnedUids),
     [dutyUserMap, dutyOnUids, onDutyCities, profile.uid, odTick, pinnedUids]
@@ -471,6 +516,29 @@ export default function Home({ profile, onLogout }: HomeProps) {
         .sort((a, b) => a.name.localeCompare(b.name)),
     [dutyUserMap, profile.uid]
   );
+  // SHOP WATCH rows: workers sorted — bahar/lock wale SABSE UPAR (Boss ko
+  // turant dikhe kaun bahar hai), phir IN_SHOP, phir stale
+  const shopWatchRows = useMemo(() => {
+    void wlvTick;
+    const now = Date.now();
+    return teamStrip
+      .filter((s) => s.role === 'worker')
+      .map((s) => ({ staff: s, live: workerLiveMap[s.uid] || null, now }))
+      .sort((a, b) => {
+        const rankOf = (r: { live: WorkerLiveDoc | null }): number => {
+          const st = r.live?.state || '';
+          if (r.live?.lock) return 0;                    // LOCKED = sabse upar
+          if (st === 'OUTSIDE') return 1;                 // bahar
+          if (st === 'LOC_OFF') return 2;                 // location off
+          if (st === 'IN_SHOP') return 3;                 // andar
+          return 4;                                       // stale/unknown
+        };
+        const ra = rankOf(a);
+        const rb = rankOf(b);
+        if (ra !== rb) return ra - rb;
+        return a.staff.name.localeCompare(b.staff.name);
+      });
+  }, [teamStrip, workerLiveMap, wlvTick]);
 
   // ---------- DP MAP (Boss order 2026-10-27: task cards me naam ke saath photo) ----------
   // staffList (manager) + apna photo turant; baki uids (worker ka manager, etc.)
@@ -1133,6 +1201,16 @@ export default function Home({ profile, onLogout }: HomeProps) {
       {/* Ambient depth — premium feel (fixed glow orbs, layout untouched) */}
       <div className="ambient-orb -top-12 -right-16 h-64 w-64 bg-indigo-500/15" />
       <div className="ambient-orb top-[45%] -left-20 h-56 w-56 bg-amber-400/10" />
+
+      {/* WORKER LOCK (Boss order 2026-11-17: "bahar jaye to app lock"): native
+          engine OUTSIDE confirm kare to worker_live.lock=true — poora app
+          iske NEECHE band (fixed overlay z-80, koi button kaam nahi karega).
+          Wapas IN (auto) ya manager unlock (live snapshot) = turant khul jata. */}
+      {isWorker && workerLock.locked && (
+        <div className="fixed inset-0 z-[80] overflow-y-auto bg-[#0A1220] px-4 pt-[max(0px,env(safe-area-inset-top))] pb-[env(safe-area-inset-bottom)]">
+          <WorkerLock profileUid={profile.uid} profileName={profile.name} live={workerLock.doc} />
+        </div>
+      )}
 
       {/* Toast (SOON modules) */}
       {notice && (
@@ -1798,6 +1876,127 @@ export default function Home({ profile, onLogout }: HomeProps) {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* SHOP WATCH (Boss order 2026-11-17: "kaun sa employee shop ke bahar hai
+          wo notification ke liye"): WORKERS only — native silent engine ka
+          IN_SHOP/OUTSIDE state live. Bahar/lock wale sabse upar. Row tap ->
+          StaffDetail (presence card + unlock). v1 = app me red chip (Boss ka
+          polling default), FCM push agle phase me. */}
+      {isManager && shopWatchRows.length > 0 && (
+        <div className="relative z-10 mt-4">
+          <div className="glass-card rounded-2xl p-4">
+            <div className="mb-1 flex items-center gap-2">
+              <Lock className="h-4 w-4 text-sky-300" />
+              <span className="text-[12px] font-extrabold tracking-[0.14em] text-slate-300">SHOP WATCH</span>
+              <span className="rounded-full border border-white/10 bg-[#101B31] px-2 py-px text-[10px] font-bold text-slate-300">
+                {shopWatchRows.length}
+              </span>
+              {shopWatchRows.some((r) => r.live?.lock || r.live?.state === 'OUTSIDE') ? (
+                <span className="ml-auto rounded bg-rose-400/15 px-2 py-0.5 text-[9px] font-extrabold tracking-wider text-rose-300">
+                  OUTSIDE ALERT
+                </span>
+              ) : (
+                <span className="ml-auto rounded bg-emerald-400/15 px-2 py-0.5 text-[9px] font-extrabold tracking-wider text-emerald-300">
+                  ALL IN SHOP
+                </span>
+              )}
+            </div>
+            <div className="mt-1 max-h-[252px] divide-y divide-white/[0.05] overflow-y-auto overscroll-contain">
+              {shopWatchRows.map((r) => {
+                const st = r.live?.state || '';
+                const locked = r.live?.lock === true;
+                const outside = st === 'OUTSIDE';
+                const locOff = st === 'LOC_OFF';
+                const inShop = st === 'IN_SHOP';
+                const stale = !r.live || !r.live.at || (r.now - (r.live.at || 0)) > 35 * 60 * 1000;
+                const stateLabel = locked
+                  ? 'LOCKED — bahar hai'
+                  : outside
+                    ? 'SHOP SE BAHAR'
+                    : locOff
+                      ? 'LOCATION OFF'
+                      : inShop
+                        ? 'SHOP ME HAI'
+                        : stale
+                          ? 'Update nahi mil raha'
+                          : 'Check chal raha';
+                const ago = r.live?.at ? fmtAgo(r.live.at, r.now) : '';
+                return (
+                  <div key={r.staff.uid} className="flex w-full items-center gap-3 py-2.5">
+                    <button
+                      onClick={() => setDetailTarget({ uid: r.staff.uid, name: r.staff.name, role: r.staff.role as 'worker' | 'sales', photo: r.staff.photo })}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left transition active:scale-[0.99]"
+                    >
+                      <div className="relative shrink-0">
+                        <div
+                          className="rounded-full"
+                          style={inShop ? { boxShadow: '0 0 0 2px rgba(52,211,153,0.55)' } : outside || locked ? { boxShadow: '0 0 0 2px rgba(244,63,94,0.55)' } : undefined}
+                        >
+                          <Avatar photo={r.staff.photo} name={r.staff.name} size={38} />
+                        </div>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate text-[14px] font-bold text-slate-100">{r.staff.name}</span>
+                          {locked ? (
+                            <span className="rounded bg-rose-500/20 px-1.5 py-px text-[8px] font-extrabold tracking-wider text-rose-300">
+                              LOCKED
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1 text-[11.5px] text-slate-400">
+                          {inShop ? (
+                            <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-300" />
+                          ) : (
+                            <Lock className={`h-3 w-3 shrink-0 ${locked || outside ? 'text-rose-300' : 'text-slate-500'}`} />
+                          )}
+                          <span className={`truncate font-semibold ${locked || outside ? 'text-rose-300' : locOff ? 'text-amber-300' : inShop ? 'text-emerald-300' : 'text-slate-400'}`}>
+                            {stateLabel}
+                          </span>
+                          {typeof r.live?.dist === 'number' && r.live.dist >= 0 ? (
+                            <span className="shrink-0 text-slate-500">· {Math.round(r.live.dist)}m</span>
+                          ) : null}
+                          {r.live?.src === 'wifi' ? (
+                            <span className="shrink-0 text-slate-500">· wifi</span>
+                          ) : null}
+                          {ago ? <span className="shrink-0 text-slate-500">· {ago}</span> : null}
+                        </div>
+                      </div>
+                    </button>
+                    {locked || outside ? (
+                      <button
+                        onClick={async () => {
+                          try {
+                            await setDoc(doc(db, 'worker_live', r.staff.uid), { lock: false }, { merge: true });
+                            await addDoc(collection(db, 'worker_alerts'), {
+                              uid: r.staff.uid,
+                              name: r.staff.name,
+                              type: 'manager_unlock',
+                              text: 'Manager ne shop watch se unlock kiya',
+                              at: Date.now(),
+                              status: 'noted',
+                            });
+                          } catch {
+                            /* ignore */
+                          }
+                        }}
+                        className="shrink-0 rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-[11px] font-extrabold text-emerald-300 transition active:scale-95"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <LockOpen className="h-3.5 w-3.5" /> UNLOCK
+                        </span>
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-2 border-t border-white/[0.05] pt-2 text-[10px] leading-relaxed text-slate-600">
+              Silent engine har check me battery bachata hai — shop ke WiFi se confirm hota hai, GPS sirf zaroorat par.
+            </p>
           </div>
         </div>
       )}

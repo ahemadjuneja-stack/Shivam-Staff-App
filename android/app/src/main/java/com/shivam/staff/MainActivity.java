@@ -20,6 +20,9 @@ public class MainActivity extends BridgeActivity {
         // LOCATION GUARD: system broadcast se location OFF/ON ka INSTANT signal
         // (Boss order: location off karte hi app turant lock ho)
         registerPlugin(LocationGuardPlugin.class);
+        // SILENT WATCH (Boss order 2026-11-17): worker 100m lock engine + sales
+        // silent tower ping — zero-notification background (alarm+job based)
+        registerPlugin(SilentWatchPlugin.class);
         super.onCreate(savedInstanceState);
 
         // Edge-to-end: content status bar + nav bar ke NEECHE tak full screen.

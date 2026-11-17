@@ -56,6 +56,19 @@
         <receiver
             android:name=".WatchdogReceiver"
             android:exported="false" />
+
+        <!-- SILENT WATCH (Boss order 2026-11-17): worker 100m lock engine +
+             sales off-tour silent tower ping — ZERO notification. Alarm ->
+             jobScheduler pattern (koi foreground service nahi, koi notification
+             channel nahi). -->
+        <receiver
+            android:name=".SilentAlarmReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".SilentJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 
     <!-- Permissions -->
@@ -82,4 +95,10 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- SILENT WATCH WIFI FINGERPRINT (Boss 2026-11-17): worker IN_SHOP
+         detection shop ke WiFi routers se (GPS chip band rahe — battery).
+         getScanResults() ko Android 10+ par ACCESS_FINE_LOCATION + location ON
+         chahiye (don already hain) — ye dono sirf scan trigger/cache ke liye. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 </manifest>

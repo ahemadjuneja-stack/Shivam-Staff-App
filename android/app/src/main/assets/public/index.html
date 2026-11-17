@@ -2,21 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Shivam Staff</title>
     <meta name="description" content="Mobile-first PWA for Shivam Staff management with Firebase Phone Auth, Firestore, and Hisab tracking." />
     <meta property="og:title" content="Shivam Staff" />
     <meta property="og:description" content="Mobile-first PWA for Shivam Staff management with Firebase Phone Auth, Firestore, and Hisab tracking." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#2563eb" />
+    <meta name="theme-color" content="#050914" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Shivam Staff" />
-    <script type="module" crossorigin src="/assets/index-CqK7zCFO.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BfYrktTY.css">
+    <!-- CACHE/SPEED (Boss order 2026-10-25): Firebase servers ka connection
+         pehle se warm — first open pe TLS/DNS handshake ka wait kam -->
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+    <link rel="dns-prefetch" href="https://firestore.googleapis.com">
+    <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin>
+    <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
+    <link rel="preconnect" href="https://shivam-staff-app.web.app" crossorigin>
+    <!-- Aboreto font NETWORK se load NAHI hota — @fontsource/aboreto (main.tsx)
+         APK ke andar bundled hai. Purana fonts.googleapis.com stylesheet link
+         render-blocking tha (first open slow karta tha) — hata diya, font SAME. -->
+    <script type="module" crossorigin src="/assets/index-DCxFsbDM.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BoXkFyxi.css">
   </head>
-  <body class="bg-gray-50 text-gray-900 antialiased selection:bg-blue-500 selection:text-white">
+  <body class="bg-[#050914] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
     <div id="root"></div>
   </body>
 </html>

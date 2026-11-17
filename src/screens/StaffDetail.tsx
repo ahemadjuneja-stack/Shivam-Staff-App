@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import Avatar from '../components/Avatar';
 import {
   MapPin, Pin, PinOff, Clock, CheckCircle2, LogIn, LogOut, Timer, Footprints, Compass,
-  CalendarDays, History, ChevronDown, Power
+  CalendarDays, History, ChevronDown, Power, Lock, LockOpen, RadioTower, ShieldAlert
 } from 'lucide-react';
 import { useSwipeBack, SWIPE_OVERLAY_STYLE } from '../lib/swipeBack';
+import { WorkerLiveDoc, WorkerAlertDoc } from '../lib/workerLive';
 import {
   CityCoord, DutyUserMeta, PunchLike, OutsideLogLike,
   nearestCity, fmtAgo, fmtClock,
@@ -154,6 +155,12 @@ export default function StaffDetailScreen({
   const [workerLoaded, setWorkerLoaded] = useState(false);
   const [attOnDuty, setAttOnDuty] = useState<boolean | null>(null);
 
+  // ---------- SHOP WATCH state (Boss order 2026-11-17) ----------
+  const [workerLive, setWorkerLive] = useState<WorkerLiveDoc | null>(null);
+  const [workerAlerts, setWorkerAlerts] = useState<WorkerAlertDoc[]>([]);
+  const [towerPings, setTowerPings] = useState<{ at: number; city: string; cellKey: string }[]>([]);
+  const [pingsLoaded, setPingsLoaded] = useState(false);
+
   // ---------- Load (ek baar open par) ----------
   useEffect(() => {
     let alive = true;
@@ -219,6 +226,26 @@ export default function StaffDetailScreen({
         setOpenRecent(openLast > 0 && t - openLast < 12 * 60 * 60 * 1000);
         setSalesLoaded(true);
       });
+      // (7) SILENT TOWER TRAIL (Boss 2026-11-17: "pata lage kaha hai"): sales
+      // tour ke bahar native silent ping har 15-min tower_pings likhta hai
+      getDocs(query(collection(db, 'tower_pings'), where('uid', '==', staff.uid)))
+        .then((snap) => {
+          if (!alive) return;
+          const todayStart = new Date().setHours(0, 0, 0, 0);
+          const rows: { at: number; city: string; cellKey: string }[] = [];
+          snap.forEach((d) => {
+            const v = d.data() as any;
+            const at = Number(v.at) || 0;
+            if (at < todayStart) return;
+            rows.push({ at, city: String(v.city || ''), cellKey: String(v.cellKey || '') });
+          });
+          rows.sort((a, b) => b.at - a.at);
+          setTowerPings(rows);
+          setPingsLoaded(true);
+        })
+        .catch(() => {
+          if (alive) setPingsLoaded(true);
+        });
     } else {
       // (3) punches (uid equality-only ✓ — established pattern Home.tsx:291)
       getDocs(query(collection(db, 'punches'), where('uid', '==', staff.uid)))
@@ -261,6 +288,38 @@ export default function StaffDetailScreen({
         .catch(() => {
           if (alive) setAttOnDuty(false);
         });
+      // (6) SHOP PRESENCE (Boss 2026-11-17): worker_live + aaj ke alerts
+      getDoc(doc(db, 'worker_live', staff.uid))
+        .then((s) => {
+          if (!alive) return;
+          setWorkerLive(s.exists() ? ({ uid: s.id, ...(s.data() as Omit<WorkerLiveDoc, 'uid'>) } as WorkerLiveDoc) : null);
+        })
+        .catch(() => {});
+      getDocs(query(collection(db, 'worker_alerts'), where('uid', '==', staff.uid)))
+        .then((snap) => {
+          if (!alive) return;
+          const todayStart = new Date().setHours(0, 0, 0, 0);
+          const rows: WorkerAlertDoc[] = [];
+          snap.forEach((d) => {
+            const v = d.data() as any;
+            const at = Number(v.at) || 0;
+            if (at < todayStart) return;
+            rows.push({
+              uid: staff.uid,
+              name: String(v.name || staff.name),
+              type: String(v.type || ''),
+              text: typeof v.text === 'string' ? v.text : undefined,
+              at,
+              dist: typeof v.dist === 'number' ? v.dist : undefined,
+              city: typeof v.city === 'string' ? v.city : undefined,
+              cellKey: typeof v.cellKey === 'string' ? v.cellKey : undefined,
+              status: String(v.status || 'open'),
+            });
+          });
+          rows.sort((a, b) => b.at - a.at);
+          setWorkerAlerts(rows);
+        })
+        .catch(() => {});
     }
     return () => {
       alive = false;
@@ -467,10 +526,40 @@ export default function StaffDetailScreen({
               </div>
             )}
           </div>
+          {/* SILENT TOWER TRAIL (Boss 2026-11-17: "pata lage ke wo sach bol raha
+              hai ya juth aur wo kaha hai"): tour ke BAHAR native silent engine
+              har 15-min serving tower log karta hai — app band ho tab bhi.
+              Sach verification: claimed time par kis tower/city me tha. */}
+          <div className="glass-card intro-rise relative z-10 mt-3 rounded-2xl p-4">
+            <div className="mb-1 flex items-center gap-2">
+              <RadioTower className="h-4 w-4 text-sky-300" />
+              <span className="text-[11px] font-extrabold tracking-[0.14em] text-slate-300">SILENT TOWER TRAIL</span>
+              <span className="ml-auto text-[10px] font-bold text-slate-500">aaj · har 15 min</span>
+            </div>
+            <p className="mb-2 text-[11px] leading-relaxed text-slate-500">
+              Tour ke bahar app silent mode me har 15 min tower ID manager ko bhejti hai (koi notification nahi).
+            </p>
+            {!pingsLoaded ? (
+              <p className="py-2 text-[12.5px] text-slate-500">Loading…</p>
+            ) : towerPings.length === 0 ? (
+              <p className="py-2 text-[12.5px] text-slate-500">Aaj koi silent ping nahi — tour me tha ya app khula tha.</p>
+            ) : (
+              <div className="max-h-[220px] divide-y divide-white/[0.05] overflow-y-auto overscroll-contain">
+                {towerPings.map((p, i) => (
+                  <div key={`${p.at}-${i}`} className="flex items-center gap-3 py-2">
+                    <span className="w-[64px] shrink-0 text-[11px] font-bold tabular-nums text-slate-500">{fmtClock(p.at)}</span>
+                    <RadioTower className="h-3 w-3 shrink-0 text-slate-500" />
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-slate-200">
+                      {p.city || 'Area nahi pata'}
+                      {p.cellKey ? <span className="ml-1.5 text-[10px] font-normal text-slate-500">({p.cellKey})</span> : null}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </>
       )}
-
-      {/* ================= WORKER ================= */}
       {!isSales && (
         <>
           {/* Duty summary (kitne baje aaya / off kiya / kitni der) */}
@@ -546,6 +635,128 @@ export default function StaffDetailScreen({
                 ))}
               </div>
             )}
+          </div>
+
+          {/* SHOP PRESENCE (Boss 2026-11-17): silent engine ka IN_SHOP/OUTSIDE
+              state + LOCK status + aaj ke alerts/reasons. Manager yahin se
+              UNLOCK bhi kar sakta hai. */}
+          <div className="glass-card intro-rise relative z-10 mt-3 rounded-2xl p-4">
+            <div className="mb-1 flex items-center gap-2">
+              {workerLive?.state === 'IN_SHOP' ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+              ) : workerLive?.lock ? (
+                <Lock className="h-4 w-4 text-rose-300" />
+              ) : (
+                <ShieldAlert className="h-4 w-4 text-slate-400" />
+              )}
+              <span className="text-[11px] font-extrabold tracking-[0.14em] text-slate-300">SHOP PRESENCE</span>
+              {workerLive?.at ? (
+                <span className="ml-auto text-[10px] font-bold text-slate-500">{fmtAgo(workerLive.at, now)}</span>
+              ) : null}
+            </div>
+            {!workerLive ? (
+              <p className="py-2 text-[12.5px] text-slate-500">Silent engine abhi report nahi kar raha — app khulne par shuru hoga.</p>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-[12.5px] text-slate-400">Status</span>
+                  <span
+                    className={`rounded px-2 py-0.5 text-[10px] font-extrabold tracking-wider ${
+                      workerLive.lock
+                        ? 'bg-rose-500/20 text-rose-300'
+                        : workerLive.state === 'OUTSIDE'
+                          ? 'bg-rose-400/15 text-rose-300'
+                          : workerLive.state === 'IN_SHOP'
+                            ? 'bg-emerald-400/15 text-emerald-300'
+                            : workerLive.state === 'LOC_OFF'
+                              ? 'bg-amber-400/15 text-amber-300'
+                              : 'bg-slate-400/15 text-slate-400'
+                    }`}
+                  >
+                    {workerLive.lock
+                      ? 'LOCKED — BAHAR'
+                      : workerLive.state === 'IN_SHOP'
+                        ? 'SHOP ME HAI'
+                        : workerLive.state === 'OUTSIDE'
+                          ? 'SHOP SE BAHAR'
+                          : workerLive.state === 'LOC_OFF'
+                            ? 'LOCATION OFF'
+                            : workerLive.state === 'OFFDUTY'
+                              ? 'OFF DUTY'
+                              : workerLive.state || '—'}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center justify-between">
+                  <span className="text-[12.5px] text-slate-400">Detection</span>
+                  <span className="text-[12.5px] font-bold text-slate-200">
+                    {workerLive.src === 'wifi'
+                      ? 'WiFi fingerprint'
+                      : workerLive.src === 'gps'
+                        ? typeof workerLive.dist === 'number' && workerLive.dist >= 0
+                          ? `GPS — ${Math.round(workerLive.dist)}m door`
+                          : 'GPS'
+                        : 'Tower / last known'}
+                  </span>
+                </div>
+                {workerLive.batteryPct ? (
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <span className="text-[12.5px] text-slate-400">Battery</span>
+                    <span className="text-[12.5px] font-bold text-slate-200">{workerLive.batteryPct}%</span>
+                  </div>
+                ) : null}
+                {workerLive.lock ? (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await setDoc(doc(db, 'worker_live', staff.uid), { lock: false }, { merge: true });
+                        await addDoc(collection(db, 'worker_alerts'), {
+                          uid: staff.uid,
+                          name: staff.name,
+                          type: 'manager_unlock',
+                          text: 'Manager ne staff detail se unlock kiya',
+                          at: Date.now(),
+                          status: 'noted',
+                        });
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 py-3 text-[13px] font-extrabold text-emerald-300 transition active:scale-[0.98]"
+                  >
+                    <LockOpen className="h-4 w-4" /> UNLOCK NOW
+                  </button>
+                ) : null}
+              </>
+            )}
+            {/* Aaj ke alerts/reasons (left_shop / reason / manager_unlock) */}
+            {workerAlerts.length > 0 ? (
+              <div className="mt-3 border-t border-white/[0.05] pt-2">
+                <p className="mb-1 text-[10px] font-extrabold tracking-[0.14em] text-slate-500">AAJ KE ALERTS</p>
+                <div className="max-h-[180px] divide-y divide-white/[0.05] overflow-y-auto overscroll-contain">
+                  {workerAlerts.map((a, i) => (
+                    <div key={`${a.at}-${i}`} className="flex items-start gap-2.5 py-2">
+                      <span className="w-[52px] shrink-0 text-[11px] font-bold tabular-nums text-slate-500">{fmtClock(a.at)}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[12px] font-semibold text-slate-200">
+                          {a.type === 'left_shop'
+                            ? 'Shop se bahar gaya'
+                            : a.type === 'back_shop'
+                              ? 'Wapas shop aaya (auto unlock)'
+                              : a.type === 'manager_unlock'
+                                ? 'Manager ne unlock kiya'
+                                : a.type === 'reason'
+                                  ? `Reason: ${a.text || '—'}`
+                                  : a.type}
+                        </p>
+                        {typeof a.dist === 'number' && a.dist >= 0 ? (
+                          <p className="text-[10px] text-slate-500">{Math.round(a.dist)}m door tha</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </>
       )}

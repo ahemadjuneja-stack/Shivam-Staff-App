@@ -38,6 +38,7 @@ const STATE_META: Record<string, { label: string; cls: string }> = {
   DWELL: { label: 'DWELL', cls: 'bg-amber-400/15 text-amber-300' },
   VISIT: { label: 'VISIT', cls: 'bg-emerald-400/15 text-emerald-300' },
   LOC_OFF: { label: 'LOC OFF', cls: 'bg-rose-500/20 text-rose-300' },
+  SILENT: { label: 'SILENT', cls: 'bg-violet-400/15 text-violet-300' },
   STALE: { label: 'STALE', cls: 'bg-amber-500/10 text-amber-400/80 border border-amber-500/30' }
 };
 

@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 // (same text — dono ko saath me change karo).
 // ============================================================
 
-export const POLICY_VERSION = 2;
+export const POLICY_VERSION = 3;
 export const POLICY_DATE = '17 November 2026';
 
 interface PrivacyPolicyProps {
@@ -74,6 +74,9 @@ export default function PrivacyPolicy({ onBack, backLabel }: PrivacyPolicyProps)
               'Account: name, mobile number, role, work city.',
               'Location (GPS + network): shop check-in, duty tracking, tour trail.',
               'Cell tower info: tower id (mcc-mnc-lac-cid) and signal — works even without GPS or internet.',
+              'Nearby Wi-Fi router IDs and signal strength (shop workers, at the shop): used only to confirm you are inside the shop — no Wi-Fi is ever connected to and no network traffic is read.',
+              'Shop presence status (shop workers): inside / outside the shop and duty lock state.',
+              'Silent tower pings (sales staff, when NOT on a tour): every 15 minutes the connected tower id is sent to management so your work location is known — with no notification, no GPS.',
               'Battery level and charging state.',
               'Motion signal (activity recognition) — only to save battery.',
               'Duty punches, visit logs and sales accounts (bills, payments, notes).',
@@ -105,6 +108,7 @@ export default function PrivacyPolicy({ onBack, backLabel }: PrivacyPolicyProps)
           <Bullets
             items={[
               'Location (foreground + background): check-in, presence and duty trail — background keeps the trail alive when the app is closed.',
+              'Wi-Fi: scan nearby router ids and signal strength — shop presence detection only (needs location permission on Android).',
               'Notifications: duty and alert messages.',
               'Motion (activity recognition): GPS stays off when you are standing still — saves battery.',
               'Battery-optimization exemption: phone battery-saver cannot stop tracking.',

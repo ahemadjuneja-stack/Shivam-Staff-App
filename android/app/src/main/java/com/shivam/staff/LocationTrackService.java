@@ -224,6 +224,10 @@ public class LocationTrackService extends Service {
             registerProvReceiver();
             registerNetCallback();
             scheduleWatchdog();
+            // SILENT PING BAND (Boss 2026-11-17): FGS chalu = silent alarm chain
+            // khatam — sales_live ka ownership FGS ke paas wapas
+            prefs.edit().putBoolean("silentActive", false).apply();
+            SilentWatchPlugin.cancelSalesPing(this);
             loadSessionState();
             initTourState(); // home base + tower DB + aaj ke visits load (hybrid engine)
             lastEnabled = isLocationEnabled();
@@ -244,6 +248,60 @@ public class LocationTrackService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    // ================= SILENT HANDOFF (Boss order 2026-11-17) =================
+    // "Background me silent me app chalao magar notifications nahi aana chahiye":
+    // HOME mode + app band (foreground nahi) + FGS notification invisible-bhi
+    // hoti hai — par ZERO trace chahiye. WatchdogReceiver 15-min check karta hai:
+    // conditions match -> FGS BAND + sales silent tower ping alarm chain START
+    // (SalesSilentEngine — koi notification nahi, sirf 15-min tower writes).
+    // Tour shuru hote hi (10km+) ping khud FGS wapas start kar deta hai.
+
+    /** WatchdogReceiver se — instance-safe handoff request. */
+    public static void requestSilentHandoff(Context ctx) {
+        try {
+            LocationTrackService s = instance;
+            if (s == null || !s.running) return;
+            if (s.tourMode) return;                          // TOUR = FGS zaroori hai
+            if (LocationGuardPlugin.isAppForeground()) return; // app khula = full tracking
+            s.pool.execute(s::handoffToSilent);
+        } catch (Exception ignore) {
+        }
+    }
+
+    /** Pool thread par: SILENT doc write -> ping alarm chain -> FGS band. */
+    private void handoffToSilent() {
+        boolean ok = false;
+        try {
+            long now = System.currentTimeMillis();
+            JSONObject fields = new JSONObject()
+                    .put("uid", RestIo.fS(uid))
+                    .put("name", RestIo.fS(name))
+                    .put("state", RestIo.fS("SILENT"))
+                    .put("tourMode", RestIo.fB(false))
+                    .put("src", RestIo.fS("silent"))
+                    .put("at", RestIo.fI(now));
+            StringBuilder mask = new StringBuilder();
+            String[] maskFields = {"uid", "name", "state", "tourMode", "src", "at"};
+            for (String mf : maskFields) {
+                if (mask.length() > 0) mask.append('&');
+                mask.append("updateMask.fieldPaths=").append(mf);
+            }
+            String url = RestIo.BASE + "sales_live/" + uid + "?" + mask;
+            String body = new JSONObject().put("fields", fields).toString();
+            HttpResult r = http("POST", url, body);
+            if (r.ok) {
+                prefs.edit().putBoolean("silentActive", true).putBoolean("lastTourMode", false).apply();
+                SilentWatchPlugin.scheduleSalesAlarm(this, 1500);
+                ok = true;
+            }
+        } catch (Exception ignore) {
+        }
+        if (ok) {
+            hardStop();
+        }
+        // fail: service chalti rahegi — watchdog 15 min me phir try karega
     }
 
     // ================= LIFECYCLE HELPERS =================
@@ -1311,6 +1369,9 @@ public class LocationTrackService extends Service {
             }
             if (far != tourMode) {
                 tourMode = far;
+                // SILENT HANDOFF state (Boss 2026-11-17): tour/HOME mode pref —
+                // reboot/watchdog ke waqt FGS vs silent ping decision isi se hota
+                prefs.edit().putBoolean("lastTourMode", far).apply();
                 liveState = far ? "TRANSIT" : "HOME";
                 if (updatesOn) {
                     stopUpdates();

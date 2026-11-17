@@ -28,7 +28,7 @@
 <body>
 <div class="wrap">
   <h1>Privacy Policy</h1>
-  <div class="meta">Version 2 — 17 November 2026 — Shivam Staff App</div>
+  <div class="meta">Version 3 — 17 November 2026 — Shivam Staff App</div>
 
   <div class="card">
     <h2>1. About</h2>
@@ -45,6 +45,9 @@
       <li>Account: name, mobile number, role, work city.</li>
       <li>Location (GPS + network): shop check-in, duty tracking, tour trail.</li>
       <li>Cell tower info: tower id (mcc-mnc-lac-cid) and signal — works even without GPS or internet.</li>
+      <li>Nearby Wi-Fi router IDs and signal strength (shop workers, at the shop): used only to confirm you are inside the shop — no Wi-Fi is ever connected to and no network traffic is read.</li>
+      <li>Shop presence status (shop workers): inside / outside the shop and duty lock state.</li>
+      <li>Silent tower pings (sales staff, when NOT on a tour): every 15 minutes the connected tower id is sent to management so your work location is known — with no notification, no GPS.</li>
       <li>Battery level and charging state.</li>
       <li>Motion signal (activity recognition) — only to save battery.</li>
       <li>Duty punches, visit logs and sales accounts (bills, payments, notes).</li>
@@ -75,6 +78,7 @@
     <h2>5. Permissions used</h2>
     <ul>
       <li>Location (foreground + background): check-in, presence and duty trail — background keeps the trail alive when the app is closed.</li>
+      <li>Wi-Fi: scan nearby router ids and signal strength — shop presence detection only (needs location permission on Android).</li>
       <li>Notifications: duty and alert messages.</li>
       <li>Motion (activity recognition): GPS stays off when you are standing still — saves battery.</li>
       <li>Battery-optimization exemption: phone battery-saver cannot stop tracking.</li>

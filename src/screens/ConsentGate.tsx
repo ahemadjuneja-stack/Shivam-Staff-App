@@ -27,7 +27,10 @@ import PrivacyPolicy, { POLICY_VERSION } from './PrivacyPolicy';
 //    se dena) — sirf location LocationGate khud enforce karta hai.
 // ============================================================
 
-const consentKey = (uid: string) => `shivam_consent_v1_${uid}`;
+// Consent key policy-version-aware (v3: WiFi/silent-tracking disclosures
+// judne par staff ko EK baar naya dialog dikhega — DPDP-compliant re-consent,
+// accept ke baad phir smooth skip).
+const consentKey = (uid: string) => `shivam_consent_${POLICY_VERSION}_${uid}`;
 const pendingKey = (uid: string) => `shivam_consent_pending_${uid}`;
 
 interface ConsentGateProps {
@@ -316,9 +319,11 @@ export default function ConsentGate({ profile, children }: ConsentGateProps) {
           <span className="text-[12.5px] leading-relaxed text-slate-300">
             <span className="font-semibold text-slate-100">Terms &amp; Conditions:</span> I
             accept them. The app also uses background location, motion detection,
-            battery-optimization exemption and app usage time (shop staff, shop time only) —
-            all listed in the Privacy Policy. The company may use my work data for duty,
-            accounts and alerts, because I work here.
+            battery-optimization exemption, nearby Wi-Fi network IDs (shop presence
+            detection only — router IDs and signal strength, never their traffic) and
+            app usage time (shop staff, shop time only) — all listed in the Privacy
+            Policy. The company may use my work data for duty, accounts and alerts,
+            because I work here.
           </span>
         </label>
 
