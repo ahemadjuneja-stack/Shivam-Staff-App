@@ -120,26 +120,49 @@ public final class RestIo {
     }
 
     // ---------- Firestore REST field shorthands ----------
+    // NOTE (Gradle build fix): Android platform org.json ka HAR put() overload
+    // checked JSONException THROW karta hai — helpers internal try/catch ke
+    // saath safe hain (callers ke try blocks double-cover karte hain).
 
     public static JSONObject fS(String v) {
-        return new JSONObject().put("stringValue", v == null ? "" : v);
+        try {
+            return new JSONObject().put("stringValue", v == null ? "" : v);
+        } catch (Exception e) {
+            return new JSONObject();
+        }
     }
 
     public static JSONObject fI(long v) {
-        return new JSONObject().put("integerValue", String.valueOf(v));
+        try {
+            return new JSONObject().put("integerValue", String.valueOf(v));
+        } catch (Exception e) {
+            return new JSONObject();
+        }
     }
 
     public static JSONObject fD(double v) {
-        return new JSONObject().put("doubleValue", v);
+        try {
+            return new JSONObject().put("doubleValue", v);
+        } catch (Exception e) {
+            return new JSONObject();
+        }
     }
 
     public static JSONObject fB(boolean v) {
-        return new JSONObject().put("booleanValue", v);
+        try {
+            return new JSONObject().put("booleanValue", v);
+        } catch (Exception e) {
+            return new JSONObject();
+        }
     }
 
     public static JSONObject fArr(JSONArray values) {
-        return new JSONObject().put("arrayValue",
-                new JSONObject().put("values", values.length() == 0 ? new JSONArray() : values));
+        try {
+            return new JSONObject().put("arrayValue",
+                    new JSONObject().put("values", values.length() == 0 ? new JSONArray() : values));
+        } catch (Exception e) {
+            return new JSONObject();
+        }
     }
 
     // ---------- OFFLINE QUEUE (prefs-backed — write fail to next wake par flush) ----------

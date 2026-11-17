@@ -17,6 +17,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
@@ -126,7 +127,17 @@ public final class WorkerSilentEngine {
                 if (fp.length() > 0 && !freshAps.isEmpty()) {
                     int matches = 0;
                     int strongest = -999;
-                    Set<String> shopAps = fp.keySet();
+                    // org.json (Android platform) me keySet() NAHI hota — keys()
+                    // iterator se HashSet banao (harness jar me tha, Gradle me nahi)
+                    Set<String> shopAps = new HashSet<>();
+                    Iterator<String> kit = fp.keys();
+                    while (kit.hasNext()) {
+                        try {
+                            String k = kit.next();
+                            if (k != null) shopAps.add(k);
+                        } catch (Exception ignore) {
+                        }
+                    }
                     for (ScanResult sr : freshAps) {
                         try {
                             if (sr == null || sr.BSSID == null) continue;
@@ -541,7 +552,11 @@ public final class WorkerSilentEngine {
 
     /** Firestore REST: array element = {mapValue:{fields:{...}}} wrapper. */
     private static JSONObject wrapMapValue(JSONObject fields) {
-        return new JSONObject().put("mapValue", new JSONObject().put("fields", fields));
+        try {
+            return new JSONObject().put("mapValue", new JSONObject().put("fields", fields));
+        } catch (Exception e) {
+            return new JSONObject();
+        }
     }
 
     private static void bufferSample(Context ctx, SharedPreferences p, String uid, String name,
