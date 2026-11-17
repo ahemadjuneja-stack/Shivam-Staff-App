@@ -119,6 +119,27 @@ public class LocationTrackService extends Service {
     private static final long SESSION_STALE_MS = 12L * 60 * 60 * 1000;
     private static final int QUEUE_MAX = 200;
     private static final long WATCHDOG_MS = 15L * 60 * 1000;
+    // ---- HYBRID TOUR ENGINE (Boss order 2026-11-17: "Rail jaise system —
+    //      jaise where is my train me internet band ho tab bhi tower id se
+    //      pata chalta hai train kaha pohchi hai" + "har 15 min me data manager
+    //      ko" + GPS battery bachat): TOUR me GPS chip BAND — sirf NETWORK
+    //      (tower/wifi) 15-min ping + PASSIVE free fixes; 15 min ek jagah ruka
+    //      = ONE-TIME GPS BURST = exact CLIENT VISIT LOG; tower key (mcc-mnc-
+    //      lac-cid) local self-learning DB se city me map hota hai — internet
+    //      band hone par bhi (CellDbCache — Where-is-my-train pattern). ----
+    private static final long TOUR_PING_MS = 15L * 60 * 1000;   // 15-min ping = manager sync cadence
+    private static final float TOUR_MIN_DIST_M = 50f;           // network ping displacement
+    private static final float TOUR_FAR_M = 10000f;             // home base se 10km+ = TOUR mode
+    private static final long DWELL_MIN_MS = 15L * 60 * 1000;   // 15 min ruka = CLIENT VISIT
+    private static final float DWELL_RADIUS_M = 200f;           // dwell radius (accuracy-aware)
+    private static final long BURST_TIMEOUT_MS = 45000L;        // GPS burst 45s timeout -> fallback
+    private static final float BURST_ACC_MAX_M = 60f;           // burst fix accuracy gate
+    private static final long LIVE_MIN_GAP_MS = 120000L;        // HOME mode live-doc throttle (2 min)
+    private static final long TOUR_PASSIVE_GAP_MS = 60000L;     // tour passive flood guard (60s)
+    private static final float TELEPORT_KMH = 260f;             // anti-spoof speed cap (flight = fake GPS)
+    private static final long TELEPORT_WINDOW_MS = 600000L;     // 10-min+ gap par teleport check nahi
+    private static final float TOWER_MISMATCH_M = 15000f;       // GPS vs serving tower 15km+ = spoof flag
+    private static final float LEARN_ACC_MAX_M = 60f;           // tower learning sirf accurate fix se
     public static final String PREFS = "shivam_track";
     // toggleDuty fallback (JS Home.tsx) — fix na ho to yahi coords
     private static final double DEF_LAT = 22.3039;
@@ -154,6 +175,25 @@ public class LocationTrackService extends Service {
     private Sensor sigMotion;
     private TriggerEventListener trigListener;
 
+    // ---- HYBRID TOUR STATE (locHandler thread owner; volatile = cross-thread) ----
+    private double homeLat, homeLng;                 // home base = shop center (JS startTracking se)
+    private String homeCity = "";                    // sales ka apna city (users doc)
+    private volatile boolean tourMode = false;       // true = GPS band, tower engine chalu
+    private volatile boolean burstDone = false;      // current anchor ka visit log ho chuka (dedupe)
+    private volatile boolean burstInFlight = false;  // GPS burst abhi chal raha hai
+    private volatile String liveState = "HOME";      // HOME|TRANSIT|DWELL|VISIT|LOC_OFF
+    private volatile long lastLiveWriteAt = 0L;
+    private volatile String lastCellKey = "";        // current serving tower fingerprint
+    private volatile CellTowerWatcher.TowerSnapshot lastCell;
+    private volatile float lastTeleportKmh = -1f;    // is fix par teleport pakda (anti-spoof)
+    private LocationListener burstListener;          // sirf locHandler thread
+    private Runnable burstTimeout;                   // sirf locHandler thread
+    private CellDbCache cellDb;                      // offline tower->city DB (file-backed)
+    private volatile String visitDayKey = "";        // local YYYY-MM-DD — todayVisits roll
+    private volatile int todayVisits = 0;            // aaj ke GPS-burst visits (service restart-proof)
+    private volatile long lastVisitAt = 0L;
+    private volatile String lastVisitCity = "";
+
     private SharedPreferences prefs;
     private String uid, name;
     private int versionCode;
@@ -185,6 +225,7 @@ public class LocationTrackService extends Service {
             registerNetCallback();
             scheduleWatchdog();
             loadSessionState();
+            initTourState(); // home base + tower DB + aaj ke visits load (hybrid engine)
             lastEnabled = isLocationEnabled();
             haveEnabled = true;
             resetStillness();
@@ -211,6 +252,7 @@ public class LocationTrackService extends Service {
         try {
             stopUpdates();
             disarmMotionSensor();
+            cleanupBurst();
             if (provReceiver != null) {
                 unregisterReceiver(provReceiver);
                 provReceiver = null;
@@ -349,6 +391,14 @@ public class LocationTrackService extends Service {
             stopUpdates();
             closeSessionInternal("loc_off", lk);
             writeEvent("off", lk);
+            // LIVE DOC ALERT (Boss 2026-11-17): location band karte hi manager
+            // board par red "LOC_OFF" — chhupna impossible (aakhri tower/city
+            // ke saath snapshot: kahan khada tha us waqt)
+            liveState = "LOC_OFF";
+            try {
+                writeLiveDoc(lk, "svc", "LOC_OFF");
+            } catch (Exception ignore) {
+            }
             if (!LocationGuardPlugin.isAppForeground()) {
                 dutySync(false, lk);
             }
@@ -400,7 +450,35 @@ public class LocationTrackService extends Service {
                 };
             }
             boolean any = false;
-            if (mode == MODE_MOVING) {
+            if (tourMode) {
+                // ---- TOUR MODE (Boss 2026-11-17: GPS chip BAND, battery bachat) ----
+                // Sirf NETWORK (tower/wifi) 15-min ping + PASSIVE (dusre apps ke
+                // fixes FREE). GPS sirf dwell-burst + gate-fix par jalta hai.
+                // City/internet-band case: tower key -> CellDbCache (offline).
+                try {
+                    if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                        lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, TOUR_PING_MS,
+                                TOUR_MIN_DIST_M, locListener, locHandler.getLooper());
+                        any = true;
+                    }
+                } catch (Exception ignore) {
+                }
+                try {
+                    lm.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 0L, 0f,
+                            locListener, locHandler.getLooper());
+                } catch (Exception ignore) {
+                }
+                if (!any) {
+                    // NETWORK off (airplane/rural) — GPS fallback (blind na rahe;
+                    // tour ping rare hai isliye yahan bhi battery hit minimal)
+                    try {
+                        lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, TOUR_PING_MS,
+                                TOUR_MIN_DIST_M, locListener, locHandler.getLooper());
+                        any = true;
+                    } catch (Exception ignore) {
+                    }
+                }
+            } else if (mode == MODE_MOVING) {
                 // MOVING: GPS + NETWORK 60s/20m — fix tab hi jab thoda sa chal
                 // gaya (Boss 2026-10-28: "thoda sa chalne ke baad location leta rahe")
                 try {
@@ -474,7 +552,28 @@ public class LocationTrackService extends Service {
      */
     private void onFixAdaptive(Location l) {
         long now = System.currentTimeMillis();
+        float teleportKmh = -1f;
         try {
+            // TELEPORT GUARD (anti-cheat — Boss: "galati hui to fayda salesmen ko
+            // hoga boss ko nahi"): pichle accepted fix se 260km/h+ = physically
+            // impossible — fake-GPS app ka classic signal. Tower wahi khada hai
+            // par GPS 100km door le jata hai — dono flag + mismatch alag se.
+            if (lastAcceptedFixAt > 0 && lastFix != null) {
+                long gap = now - lastAcceptedFixAt;
+                if (gap > 5000L && gap < TELEPORT_WINDOW_MS) {
+                    try {
+                        float[] dt = new float[1];
+                        Location.distanceBetween(lastFix.getLatitude(), lastFix.getLongitude(),
+                                l.getLatitude(), l.getLongitude(), dt);
+                        float kmh = dt[0] / Math.max(1f, gap / 1000f) * 3.6f;
+                        if (kmh > TELEPORT_KMH) teleportKmh = kmh;
+                    } catch (Exception ignore) {
+                    }
+                }
+            }
+            // TOUR/HOME mode: home base (shop center) se 10km+ door = tour
+            // (GPS band -> tower engine) — wapas aaya to poora precise engine
+            updateTourMode(l);
             double lat = l.getLatitude();
             double lng = l.getLongitude();
             if (!hasAnchor) {
@@ -495,8 +594,13 @@ public class LocationTrackService extends Service {
                     anchorLat = lat;
                     anchorLng = lng;
                     stillSinceAt = now;
+                    if (tourMode) {
+                        // TOUR: chal pada — naya anchor, is anchor ka visit-burst reset
+                        burstDone = false;
+                        liveState = "TRANSIT";
+                    }
                     if (mode != MODE_MOVING) switchMode(MODE_MOVING);
-                } else if (mode == MODE_MOVING && now - stillSinceAt >= STILL_CONFIRM_MS) {
+                } else if (!tourMode && mode == MODE_MOVING && now - stillSinceAt >= STILL_CONFIRM_MS) {
                     switchMode(MODE_STILL);
                 }
             }
@@ -504,12 +608,24 @@ public class LocationTrackService extends Service {
         }
         // STILL me passive fixes flood ho sakte hain (dusra app navigation chala
         // raha ho) — 20s gap guard warna writes + radio baar-baar jagenge
-        if (mode == MODE_STILL && "passive".equals(l.getProvider())
-                && now - lastAcceptedFixAt < MIN_FIX_GAP_MS) {
+        if ((tourMode || mode == MODE_STILL) && "passive".equals(l.getProvider())
+                && now - lastAcceptedFixAt < TOUR_PASSIVE_GAP_MS) {
             return;
         }
         lastAcceptedFixAt = now;
+        lastTeleportKmh = teleportKmh;
         appendPoint(l);
+        // HYBRID PIPELINE (Boss 2026-11-17): TOUR me visit-burst + 15-min
+        // manager sync; HOME me throttled (2 min) live-doc — dono manager
+        // dashboard ko sales_live/{uid} par feed karte hain.
+        try {
+            if (tourMode) {
+                onTourFix(l, now);
+            } else if (now - lastLiveWriteAt >= LIVE_MIN_GAP_MS) {
+                writeLiveDoc(l, "svc", null);
+            }
+        } catch (Exception ignore) {
+        }
     }
 
     /** Hardware Significant Motion sensor — hila to MILLISECONDS me MOVING mode
@@ -639,7 +755,9 @@ public class LocationTrackService extends Service {
         if (needFlush) {
             flushPoints();
         }
-        if (fixCount % USERLOC_EVERY == 0) {
+        // TOUR me har fix = 15-min ka hi hota hai — users.lastLocation bhi
+        // har fix par (manager StaffDetail fresh rahe); HOME me purana throttle
+        if (fixCount % (tourMode ? 1 : USERLOC_EVERY) == 0) {
             updateLastLocation(l);
         }
     }
@@ -835,6 +953,15 @@ public class LocationTrackService extends Service {
             JSONObject body = new JSONObject().put("fields", fields);
             final String url = BASE + "loc_sessions/" + id;
             final Location f = fix;
+            // APP-OPEN FIRST FIX (Boss 2026-11-17: "app open hote hi sab se
+            // pehle gps location bheje"): gate ka fresh fix = serving tower read
+            // + tower learning + live-doc write — manager ko TURANT pata sales
+            // kahan app khol kar hai (city + tower + battery ke saath).
+            final CellTowerWatcher.TowerSnapshot gateCell = CellTowerWatcher.read(this);
+            if (gateCell != null && gateCell.ok) {
+                lastCell = gateCell;
+                lastCellKey = gateCell.key;
+            }
             pool.execute(() -> {
                 try {
                     HttpResult r = http("POST", url, body.toString());
@@ -850,6 +977,16 @@ public class LocationTrackService extends Service {
                     } else {
                         queueOp("sess", url, body.toString());
                     }
+                } catch (Exception ignore) {
+                }
+                try {
+                    if (f != null && f.hasAccuracy() && f.getAccuracy() <= LEARN_ACC_MAX_M) {
+                        learnTower(f, gateCell); // GPS + tower = DB self-learning
+                    }
+                } catch (Exception ignore) {
+                }
+                try {
+                    writeLiveDoc(f != null ? f : lastKnown(), "app_open", null);
                 } catch (Exception ignore) {
                 }
             });
@@ -979,12 +1116,13 @@ public class LocationTrackService extends Service {
     private void queueOp(String tag, String url, String body) {
         try {
             JSONArray q = new JSONArray(prefs.getString("queue", "[]"));
-            // dedupe: userloc sirf latest rakho
-            if ("userloc".equals(tag)) {
+            // dedupe: userloc/live sirf LATEST rakho (purana overwrite bekaar)
+            if ("userloc".equals(tag) || "live".equals(tag)) {
                 JSONArray nq = new JSONArray();
                 for (int i = 0; i < q.length(); i++) {
                     JSONObject o = q.getJSONObject(i);
-                    if (!"userloc".equals(o.optString("tag"))) nq.put(o);
+                    String t = o.optString("tag");
+                    if (!"userloc".equals(t) && !"live".equals(t)) nq.put(o);
                 }
                 q = nq;
             }
@@ -1104,7 +1242,544 @@ public class LocationTrackService extends Service {
         }
     }
 
-    // ================= PLUGIN ENTRY =================
+    // ============================================================
+    // HYBRID TOUR ENGINE (Boss order 2026-11-17)
+    // "Rail jaise system": TOUR me GPS chip BAND (battery bachat) — location
+    // tower ID se chalti hai (NETWORK ping + cell key -> CellDbCache). 15 min
+    // ek jagah ruka = ONE-TIME GPS BURST = exact CLIENT VISIT LOG. Har ping
+    // manager ko sales_live/{uid} par. State machine:
+    //   HOME -> TRANSIT -> DWELL -> [GPS BURST] -> VISIT -> (move) -> TRANSIT
+    // ============================================================
+
+    /** Home base prefs (JS startTracking se: shop center + home city) + tower DB + visits count. */
+    private void initTourState() {
+        try {
+            if (lm == null) lm = (LocationManager) getSystemService(LOCATION_SERVICE);
+            homeLat = Double.longBitsToDouble(prefs.getLong("homeLat", 0L));
+            homeLng = Double.longBitsToDouble(prefs.getLong("homeLng", 0L));
+            homeCity = prefs.getString("homeCity", "");
+            visitDayKey = prefs.getString("visitsDay", "");
+            todayVisits = prefs.getInt("visitsCount", 0);
+            lastVisitAt = prefs.getLong("lastVisitAt", 0L);
+            lastVisitCity = prefs.getString("lastVisitCity", "");
+            rollVisitDayIfNeeded();
+            // CellDbCache (file I/O) + updateTourMode (geographer-free paths) —
+            // file read main thread par StrictMode violation nahi kare, isliye
+            // pool thread par init + tour decision
+            final Location lk = lastKnown();
+            pool.execute(() -> {
+                try {
+                    if (cellDb == null) cellDb = new CellDbCache(this);
+                    if (lk != null) updateTourMode(lk);
+                } catch (Exception ignore) {
+                }
+            });
+        } catch (Exception ignore) {
+        }
+    }
+
+    /** Din badla -> todayVisits reset (local midnight bucket). */
+    private void rollVisitDayIfNeeded() {
+        try {
+            String day = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                    .format(new java.util.Date());
+            if (!day.equals(visitDayKey)) {
+                visitDayKey = day;
+                todayVisits = 0;
+                prefs.edit().putString("visitsDay", day).putInt("visitsCount", 0).apply();
+            }
+        } catch (Exception ignore) {
+        }
+    }
+
+    /**
+     * HOME base (shop center) se 10km+ door = TOUR mode: GPS chip BAND —
+     * sirf NETWORK 15-min ping + PASSIVE. Wapas shop ke paas = HOME mode:
+     * poora precise road-map engine (Boss ka 2026-10-28 battery engine).
+     */
+    private void updateTourMode(Location l) {
+        try {
+            boolean far = false;
+            if (homeLat != 0d && homeLng != 0d) {
+                float[] d = new float[1];
+                try {
+                    Location.distanceBetween(l.getLatitude(), l.getLongitude(), homeLat, homeLng, d);
+                } catch (Exception e) {
+                    d[0] = 0f;
+                }
+                far = d[0] > TOUR_FAR_M;
+            }
+            if (far != tourMode) {
+                tourMode = far;
+                liveState = far ? "TRANSIT" : "HOME";
+                if (updatesOn) {
+                    stopUpdates();
+                    startUpdates();
+                }
+                writeLiveDoc(l, "svc", far ? "TRANSIT" : "HOME");
+            }
+        } catch (Exception ignore) {
+        }
+    }
+
+    /**
+     * TOUR ping pipeline (har fix par — network 15-min + passive):
+     * serving tower read -> dwell/visit decision -> 15-min manager sync.
+     */
+    private void onTourFix(Location l, long now) {
+        try {
+            CellTowerWatcher.TowerSnapshot cell = CellTowerWatcher.read(this);
+            lastCell = cell;
+            if (cell.ok && cell.key != null && !cell.key.isEmpty()) {
+                lastCellKey = cell.key;
+            }
+            long dwellMs = hasAnchor ? now - stillSinceAt : 0L;
+            float[] d = new float[1];
+            if (hasAnchor) {
+                try {
+                    Location.distanceBetween(l.getLatitude(), l.getLongitude(), anchorLat, anchorLng, d);
+                } catch (Exception e) {
+                    d[0] = 0f;
+                }
+            }
+            // accuracy-aware dwell radius (coarse network fix ka noise dwell
+            // na tode — Boss rule: "galati ki koi gunjaish nahi")
+            float acc = l.hasAccuracy() ? Math.min(l.getAccuracy(), 600f) : 400f;
+            boolean stillHere = hasAnchor && d[0] <= (DWELL_RADIUS_M + acc);
+            if (stillHere && dwellMs >= DWELL_MIN_MS && !burstDone && !burstInFlight) {
+                // ---- STATE C: DWELL >= 15 min CONFIRMED -> ONE-TIME GPS BURST ----
+                startBurst();
+                return;
+            }
+            liveState = stillHere ? (burstDone ? "VISIT" : "DWELL") : "TRANSIT";
+            // ---- STATE A: 15-min manager sync (ping interval hi cadence hai) ----
+            if (now - lastLiveWriteAt >= TOUR_PING_MS) {
+                writeLiveDoc(l, cell.ok ? "network" : "last", null);
+            }
+        } catch (Exception ignore) {
+        }
+    }
+
+    /**
+     * STATE C — ONE-TIME high-accuracy GPS burst (poore tour me yahi GPS hai):
+     * 45s window, sirf ek visit per dwell-episode. Fix milte hi GPS listener
+     * hata diya jata hai — GPS chip wapas band (battery bachat).
+     */
+    private void startBurst() {
+        try {
+            burstDone = true; // ek anchor = ek visit log (dedupe — double visit kabhi nahi)
+            burstInFlight = true;
+            liveState = "VISIT";
+            if (lm == null || locHandler == null || !hasFine()) {
+                handleBurstFix(null);
+                return;
+            }
+            LocationListener bl = new LocationListener() {
+                @Override
+                public void onLocationChanged(@NonNull Location location) {
+                    if (location != null && burstInFlight) handleBurstFix(location);
+                }
+
+                @Override
+                public void onStatusChanged(String p, int s, Bundle e) {
+                }
+
+                @Override
+                public void onProviderEnabled(@NonNull String p) {
+                }
+
+                @Override
+                public void onProviderDisabled(@NonNull String p) {
+                }
+            };
+            burstListener = bl;
+            try {
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, bl, locHandler.getLooper());
+            } catch (Exception e) {
+                handleBurstFix(null); // GPS unavailable — last-fix fallback se bhi visit log
+                return;
+            }
+            burstTimeout = () -> {
+                if (burstInFlight) handleBurstFix(null); // 45s me fix nahi -> fallback
+            };
+            locHandler.postDelayed(burstTimeout, BURST_TIMEOUT_MS);
+        } catch (Exception e) {
+            burstInFlight = false;
+        }
+    }
+
+    /**
+     * Burst fix/timeout: visit log (sales_visits) + live doc + tower learning.
+     * ANTI-SPOOF layer yahan hai: mock / teleport / low-accuracy / GPS-vs-
+     * tower-mismatch flags — Boss ko hamesha sahi sach dikhe.
+     */
+    private void handleBurstFix(Location burst) {
+        try {
+            burstInFlight = false;
+            if (burstTimeout != null && locHandler != null) {
+                locHandler.removeCallbacks(burstTimeout);
+                burstTimeout = null;
+            }
+            if (burstListener != null && lm != null) {
+                try {
+                    lm.removeUpdates(burstListener); // GPS chip turant BAND
+                } catch (Exception ignore) {
+                }
+                burstListener = null;
+            }
+            // BEST fix: accurate burst > purana lastFix
+            Location best;
+            if (burst != null && (!burst.hasAccuracy() || burst.getAccuracy() <= BURST_ACC_MAX_M)) {
+                best = burst;
+            } else if (burst != null && lastFix != null
+                    && burst.getAccuracy() <= (lastFix.hasAccuracy() ? lastFix.getAccuracy() : 9999f)) {
+                best = burst;
+            } else {
+                best = lastFix;
+            }
+            long now = System.currentTimeMillis();
+            long dwellMin = hasAnchor ? Math.max(1L, (now - stillSinceAt) / 60000L) : 0L;
+            if (best == null) {
+                // fix mila hi nahi (godown/underground) — is dwell ka burst
+                // RETRY karenge (next 15-min ping par) — visit chhupna impossible,
+                // missing visit = salesmen ka fayda (Boss: "galati ki koi gunjaish nahi")
+                burstDone = false;
+                writeLiveDoc(null, "burst_timeout", "VISIT");
+                return;
+            }
+            java.util.List<String> flags = new ArrayList<>();
+            if (lastTeleportKmh > 0) flags.add("gps_teleport");
+            if (best.hasAccuracy() && best.getAccuracy() > BURST_ACC_MAX_M) flags.add("gps_low_accuracy");
+            if (isMock(best)) flags.add("mock_location");
+            // TOWER MISMATCH (anti-spoof ka sabse strong signal): fake-GPS app
+            // location 100km door le jata hai par SIM REAL tower se judi rehti
+            // hai — burst GPS vs serving tower 15km+ door = cheating flag
+            CellTowerWatcher.TowerSnapshot cell = lastCell != null ? lastCell : CellTowerWatcher.read(this);
+            lastCell = cell;
+            if (cell != null && cell.ok && cellDb != null) {
+                CellDbCache.TowerEntry te = cellDb.lookup(cell.key);
+                if (te != null && te.lat < 1000d) {
+                    float[] dm = new float[1];
+                    try {
+                        Location.distanceBetween(best.getLatitude(), best.getLongitude(), te.lat, te.lng, dm);
+                    } catch (Exception e) {
+                        dm[0] = 0f;
+                    }
+                    if (dm[0] > TOWER_MISMATCH_M) flags.add("gps_tower_mismatch");
+                }
+            }
+            String[] city = resolveCity(best, cell);
+            lastVisitAt = now;
+            lastVisitCity = city[0];
+            todayVisits++;
+            prefs.edit().putInt("visitsCount", todayVisits)
+                    .putLong("lastVisitAt", lastVisitAt)
+                    .putString("lastVisitCity", lastVisitCity)
+                    .apply();
+            writeVisitLog(best, dwellMin, cell, city, flags, now);
+            writeLiveDoc(best, "gps_burst", "VISIT");
+            learnTower(best, cell); // GPS + tower = DB self-learning (future offline)
+        } catch (Exception ignore) {
+        }
+    }
+
+    /** Burst GPS listener + timeout ka cleanup (service stop/mode change par). */
+    private void cleanupBurst() {
+        try {
+            if (burstTimeout != null && locHandler != null) locHandler.removeCallbacks(burstTimeout);
+        } catch (Exception ignore) {
+        }
+        burstTimeout = null;
+        try {
+            if (burstListener != null && lm != null) lm.removeUpdates(burstListener);
+        } catch (Exception ignore) {
+        }
+        burstListener = null;
+        burstInFlight = false;
+    }
+
+    // ================= CITY RESOLUTION (geocoder -> tower DB -> home) =================
+
+    /**
+     * City naam nikaalna (manager ko naak ke neeche naam dikhta hai):
+     *  1) Geocoder (accurate, net chahiye) — sirf decent-accuracy fix par
+     *  2) Serving tower key ki city (CellDbCache — INTERNET BAND me bhi chalta hai)
+     *  3) Nearest known tower ki city (25km cap)
+     *  4) Home base 10km ke andar = home city
+     * Returns {city, citySrc} — citySrc manager ko transparency ke liye.
+     */
+    private String[] resolveCity(Location fix, CellTowerWatcher.TowerSnapshot cell) {
+        try {
+            if (cellDb == null) cellDb = new CellDbCache(this);
+            if (fix != null && fix.hasAccuracy() && fix.getAccuracy() <= 150f
+                    && android.location.Geocoder.isPresent()) {
+                try {
+                    android.location.Geocoder g = new android.location.Geocoder(this, java.util.Locale.ENGLISH);
+                    java.util.List<android.location.Address> list =
+                            g.getFromLocation(fix.getLatitude(), fix.getLongitude(), 1);
+                    if (list != null && !list.isEmpty()) {
+                        android.location.Address a = list.get(0);
+                        String c = a.getLocality() != null ? a.getLocality()
+                                : (a.getSubAdminArea() != null ? a.getSubAdminArea() : a.getAdminArea());
+                        if (c != null && !c.trim().isEmpty()) return new String[]{c.trim(), "geocoder"};
+                    }
+                } catch (Exception ignore) {
+                    // offline/slow net — tower DB wale sources
+                }
+            }
+            if (cell != null && cell.ok && cell.key != null && !cell.key.isEmpty() && cellDb != null) {
+                CellDbCache.TowerEntry te = cellDb.lookup(cell.key);
+                if (te != null && !te.city.isEmpty()) return new String[]{te.city, "tower_db"};
+            }
+            if (fix != null && cellDb != null) {
+                String c = cellDb.nearestCity(fix.getLatitude(), fix.getLongitude());
+                if (c != null && !c.isEmpty()) return new String[]{c, "tower_near"};
+            }
+            if (fix != null && homeLat != 0d && homeLng != 0d && homeCity != null && !homeCity.isEmpty()) {
+                float[] d = new float[1];
+                try {
+                    Location.distanceBetween(fix.getLatitude(), fix.getLongitude(), homeLat, homeLng, d);
+                } catch (Exception e) {
+                    d[0] = Float.MAX_VALUE;
+                }
+                if (d[0] <= TOUR_FAR_M) return new String[]{homeCity, "home"};
+            }
+        } catch (Exception ignore) {
+        }
+        return new String[]{"", "none"};
+    }
+
+    // ================= TOWER DB LEARNING (GPS + tower mila = DB grow) =================
+
+    /**
+     * SELF-LEARNING (Where-is-my-train ka core): accurate GPS fix + serving
+     * tower -> local cache record + Firestore cell_towers/{key} upsert.
+     * Jitna staff ghumega, DB utna mota — agli trip par INTERNET BAND hone
+     * par bhi tower se city dikh jayegi. Sirf <= 60m accuracy ke fix se
+     * learn hota hai (galat tower-anchor kabhi nahi banta).
+     */
+    private void learnTower(Location fix, CellTowerWatcher.TowerSnapshot cell) {
+        try {
+            if (cellDb == null) cellDb = new CellDbCache(this);
+            if (fix == null || cell == null || !cell.ok) return;
+            if (cell.key == null || cell.key.isEmpty() || cell.key.endsWith("-0-0")) return;
+            if (!fix.hasAccuracy() || fix.getAccuracy() > LEARN_ACC_MAX_M) return;
+            String[] city = resolveCity(fix, cell);
+            cellDb.record(cell.key, fix.getLatitude(), fix.getLongitude(), fix.getAccuracy(), city[0]);
+            final String key = cell.key;
+            final double lat = fix.getLatitude();
+            final double lng = fix.getLongitude();
+            final float acc = fix.getAccuracy();
+            final String cityStr = city[0];
+            pool.execute(() -> {
+                try {
+                    int samples = 1;
+                    HttpResult cur = http("GET", BASE + "cell_towers/" + key, null);
+                    if (cur.ok) {
+                        try {
+                            JSONObject f = new JSONObject(cur.body).optJSONObject("fields");
+                            if (f != null) {
+                                JSONObject sObj = f.optJSONObject("samples");
+                                int prev = sObj == null ? 0 : sObj.optInt("integerValue", 0);
+                                samples = Math.max(1, prev) + 1;
+                            }
+                        } catch (Exception ignore) {
+                        }
+                    }
+                    JSONObject fields = new JSONObject()
+                            .put("key", new JSONObject().put("stringValue", key))
+                            .put("lat", new JSONObject().put("doubleValue", lat))
+                            .put("lng", new JSONObject().put("doubleValue", lng))
+                            .put("acc", new JSONObject().put("doubleValue", acc))
+                            .put("samples", new JSONObject().put("integerValue", String.valueOf(samples)))
+                            .put("updatedAt", new JSONObject().put("integerValue",
+                                    String.valueOf(System.currentTimeMillis())));
+                    if (cityStr != null && !cityStr.isEmpty()) {
+                        fields.put("city", new JSONObject().put("stringValue", cityStr));
+                    }
+                    JSONObject body = new JSONObject().put("fields", fields);
+                    String url = BASE + "cell_towers/" + key;
+                    HttpResult r = http("POST", url, body.toString());
+                    if (!r.ok) queueOp("tower", url, body.toString());
+                } catch (Exception ignore) {
+                }
+            });
+        } catch (Exception ignore) {
+        }
+    }
+
+    // ================= SALES VISIT LOG (GPS burst ka output) =================
+
+    /**
+     * sales_visits/{sv-uid-at} — CLIENT VISIT LOG (append-only):
+     * {uid, name, at, arrivedAt, dwellMin, lat, lng, acc, city, citySrc,
+     *  cellKey, mock, flags[], src:'hybrid_burst', versionCode, deviceModel}
+     */
+    private void writeVisitLog(Location fix, long dwellMin, CellTowerWatcher.TowerSnapshot cell,
+                               String[] city, java.util.List<String> flags, long now) {
+        try {
+            JSONObject fields = new JSONObject()
+                    .put("uid", new JSONObject().put("stringValue", uid))
+                    .put("name", new JSONObject().put("stringValue", name))
+                    .put("at", new JSONObject().put("integerValue", String.valueOf(now)))
+                    .put("arrivedAt", new JSONObject().put("integerValue", String.valueOf(stillSinceAt)))
+                    .put("dwellMin", new JSONObject().put("integerValue", String.valueOf(dwellMin)))
+                    .put("lat", new JSONObject().put("doubleValue", fix.getLatitude()))
+                    .put("lng", new JSONObject().put("doubleValue", fix.getLongitude()))
+                    .put("src", new JSONObject().put("stringValue", "hybrid_burst"))
+                    .put("versionCode", new JSONObject().put("integerValue", String.valueOf(versionCode)))
+                    .put("deviceModel", new JSONObject().put("stringValue",
+                            Build.MODEL == null ? "Android device" : Build.MODEL))
+                    .put("osVersion", new JSONObject().put("stringValue", "Android " + Build.VERSION.RELEASE));
+            if (fix.hasAccuracy()) {
+                fields.put("acc", new JSONObject().put("doubleValue", fix.getAccuracy()));
+            }
+            if (city != null) {
+                fields.put("city", new JSONObject().put("stringValue", city[0]));
+                fields.put("citySrc", new JSONObject().put("stringValue", city[1]));
+            }
+            if (cell != null && cell.ok && cell.key != null && !cell.key.isEmpty()) {
+                fields.put("cellKey", new JSONObject().put("stringValue", cell.key));
+            }
+            if (isMock(fix)) {
+                fields.put("mock", new JSONObject().put("booleanValue", true));
+            }
+            if (flags != null && !flags.isEmpty()) {
+                JSONArray arr = new JSONArray();
+                for (String fl : flags) arr.put(new JSONObject().put("stringValue", fl));
+                fields.put("flags", new JSONObject().put("arrayValue", new JSONObject().put("values", arr)));
+            }
+            JSONObject body = new JSONObject().put("fields", fields);
+            String url = BASE + "sales_visits?documentId=sv-" + uid + "-" + now;
+            final String b = body.toString();
+            final String u = url;
+            pool.execute(() -> {
+                try {
+                    HttpResult r = http("POST", u, b);
+                    if (!r.ok) queueOp("visit", u, b); // net off — queue me, baad me flush
+                } catch (Exception ignore) {
+                }
+            });
+        } catch (Exception ignore) {
+        }
+    }
+
+    // ================= SALES LIVE DOC (har 15-min manager ko dikhta hai) =================
+
+    /**
+     * sales_live/{uid} — FULL REPLACE (stale flags kabhi nahi baste):
+     * {uid, name, state, tourMode, lat, lng, acc, src, city, citySrc,
+     *  cellKey, cell{mcc,mnc,lac,cid,dbm}, batteryPct, charging, flags[],
+     *  todayVisits, lastVisitAt, lastVisitCity, at, versionCode, deviceModel}
+     * Manager board (SalesLive.tsx) onSnapshot karta hai — 15-min fresh.
+     * Queue tag "live" = dedupe-latest (net off par sirf sabse naya flush).
+     */
+    private void writeLiveDoc(Location fix, String src, String stateOverride) {
+        try {
+            long now = System.currentTimeMillis();
+            rollVisitDayIfNeeded();
+            final String state = stateOverride != null && !stateOverride.isEmpty() ? stateOverride : liveState;
+            final Location f = fix;
+            final String srcF = src;
+            lastLiveWriteAt = now;
+            // POORA BODY POOL THREAD PAR — resolveCity() me Geocoder (network)
+            // call hai; ye main thread (PROVIDERS_CHANGED broadcast) se bhi call
+            // hota hai — geocoder main thread par ANR de sakta hai (Boss:
+            // "galati ki koi gunjaish nahi").
+            pool.execute(() -> {
+                try {
+                    JSONObject fields = new JSONObject()
+                            .put("uid", new JSONObject().put("stringValue", uid))
+                            .put("name", new JSONObject().put("stringValue", name))
+                            .put("state", new JSONObject().put("stringValue", state))
+                            .put("tourMode", new JSONObject().put("booleanValue", tourMode))
+                            .put("at", new JSONObject().put("integerValue", String.valueOf(now)))
+                            .put("versionCode", new JSONObject().put("integerValue", String.valueOf(versionCode)))
+                            .put("deviceModel", new JSONObject().put("stringValue",
+                                    Build.MODEL == null ? "Android device" : Build.MODEL))
+                            .put("osVersion", new JSONObject().put("stringValue", "Android " + Build.VERSION.RELEASE));
+                    if (f != null) {
+                        fields.put("lat", new JSONObject().put("doubleValue", f.getLatitude()));
+                        fields.put("lng", new JSONObject().put("doubleValue", f.getLongitude()));
+                        if (f.hasAccuracy()) {
+                            fields.put("acc", new JSONObject().put("doubleValue", f.getAccuracy()));
+                        }
+                    }
+                    if (srcF != null) {
+                        fields.put("src", new JSONObject().put("stringValue", srcF));
+                    }
+                    // SERVING TOWER (rail-system core: ye key offline city deta hai)
+                    CellTowerWatcher.TowerSnapshot cell = lastCell != null ? lastCell : CellTowerWatcher.read(this);
+                    lastCell = cell;
+                    if (cell != null && cell.ok && cell.key != null && !cell.key.isEmpty()) {
+                        fields.put("cellKey", new JSONObject().put("stringValue", cell.key));
+                        JSONObject cellMap = new JSONObject();
+                        if (cell.mcc != null && !cell.mcc.isEmpty()) {
+                            cellMap.put("mcc", new JSONObject().put("stringValue", cell.mcc));
+                        }
+                        if (cell.mnc != null && !cell.mnc.isEmpty()) {
+                            cellMap.put("mnc", new JSONObject().put("stringValue", cell.mnc));
+                        }
+                        if (cell.lac >= 0) cellMap.put("lac", new JSONObject().put("integerValue", String.valueOf(cell.lac)));
+                        if (cell.cid >= 0) cellMap.put("cid", new JSONObject().put("integerValue", String.valueOf(cell.cid)));
+                        if (cell.dbm != 0) cellMap.put("dbm", new JSONObject().put("integerValue", String.valueOf(cell.dbm)));
+                        if (cellMap.length() > 0) {
+                            fields.put("cell", new JSONObject().put("mapValue",
+                                    new JSONObject().put("fields", cellMap)));
+                        }
+                    }
+                    // CITY (tower DB + geocoder + home) — manager ko naam se dikhta hai
+                    String[] city = resolveCity(f, cell);
+                    fields.put("city", new JSONObject().put("stringValue", city[0]));
+                    fields.put("citySrc", new JSONObject().put("stringValue", city[1]));
+                    // BATTERY (phone band/battery drain bhi ek cheating signal hai)
+                    int[] bat = readBattery();
+                    if (bat[0] >= 0) {
+                        fields.put("batteryPct", new JSONObject().put("integerValue", String.valueOf(bat[0])));
+                        fields.put("charging", new JSONObject().put("booleanValue", bat[1] == 1));
+                    }
+                    // INTEGRITY FLAGS (anti-cheat layer)
+                    JSONArray arr = new JSONArray();
+                    if (lastTeleportKmh > 0) arr.put(new JSONObject().put("stringValue", "gps_teleport"));
+                    if (f != null && isMock(f)) arr.put(new JSONObject().put("stringValue", "mock_location"));
+                    if (f != null && f.hasAccuracy() && f.getAccuracy() > 300f) {
+                        arr.put(new JSONObject().put("stringValue", "gps_low_accuracy"));
+                    }
+                    fields.put("flags", new JSONObject().put("arrayValue",
+                            new JSONObject().put("values", arr)));
+                    fields.put("todayVisits", new JSONObject().put("integerValue", String.valueOf(todayVisits)));
+                    fields.put("lastVisitAt", new JSONObject().put("integerValue", String.valueOf(lastVisitAt)));
+                    fields.put("lastVisitCity", new JSONObject().put("stringValue",
+                            lastVisitCity == null ? "" : lastVisitCity));
+                    JSONObject body = new JSONObject().put("fields", fields);
+                    String url = BASE + "sales_live/" + uid;
+                    HttpResult r = http("POST", url, body.toString());
+                    if (!r.ok) queueOp("live", url, body.toString());
+                } catch (Exception ignore) {
+                }
+            });
+        } catch (Exception ignore) {
+        }
+    }
+
+    /** [batteryPct, charging] — sticky battery intent se (koi listener nahi). */
+    private int[] readBattery() {
+        int[] out = new int[]{-1, 0};
+        try {
+            android.os.BatteryManager bm = (android.os.BatteryManager) getSystemService(BATTERY_SERVICE);
+            if (bm != null) {
+                int level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
+                if (level > 0 && level <= 100) out[0] = level;
+            }
+            Intent i = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (i != null) {
+                int plugged = i.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0);
+                out[1] = plugged != 0 ? 1 : 0;
+            }
+        } catch (Exception ignore) {
+        }
+        return out;
+    }
 
     /** LocationGuard.ensureSession() — gate pass fresh fix ke saath. */
     public static void ensureFromPlugin(boolean hasFix, double lat, double lng) {
@@ -1150,6 +1825,7 @@ public class LocationTrackService extends Service {
         try {
             stopUpdates();
             disarmMotionSensor();
+            cleanupBurst(); // GPS burst listener/timeout ka poora cleanup
         } catch (Exception ignore) {
         }
         try {

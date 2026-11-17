@@ -38,9 +38,10 @@ import {
   markAutoCloseDone,
   MAX_SHIFT_MS
 } from '../lib/integrity';
-import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock, Pin, Truck } from 'lucide-react';
+import { CalendarDays, Timer, BarChart3, Wallet, ChevronRight, MapPin, Pencil, Trash2, X, CheckCircle2, Clock, Pin, Truck, RadioTower } from 'lucide-react';
 import { computeStaffRows, fmtAgo, CityCoord, DutyUserMeta } from '../lib/onDuty';
 import StaffDetailScreen, { StaffDetailTarget } from './StaffDetail';
+import SalesLiveScreen from './SalesLive';
 import { consumeAutoDutyRequest, consumeAutoDutyOffRequest } from './LocationGate';
 import TaskVerifyModal from '../components/TaskVerifyModal';
 import { verifyTask } from '../lib/taskVerify';
@@ -399,6 +400,8 @@ export default function Home({ profile, onLogout }: HomeProps) {
   };
   // DETAIL (Boss 2026-10-28): row/DP tap -> StaffDetail slide screen
   const [detailTarget, setDetailTarget] = useState<StaffDetailTarget | null>(null);
+  // SALES — TOUR LIVE (Boss 2026-11-17): manager hybrid-engine board
+  const [showSalesLive, setShowSalesLive] = useState(false);
   useEffect(() => {
     if (!isManager) return;
     const unsubs: Array<() => void> = [];
@@ -1817,6 +1820,18 @@ export default function Home({ profile, onLogout }: HomeProps) {
           Salary Info.
           <span className="soon-badge absolute -top-1.5 -right-1 rounded-full border border-white/10 bg-[#101B31] px-1.5 py-px text-[8px] font-extrabold tracking-wider text-slate-400">SOON</span>
         </button>
+        {/* SALES — TOUR LIVE (Boss order 2026-11-17): hybrid tour engine ka
+            live board — har 15-min tower/GPS ping + GPS-burst visit logs +
+            anti-cheat alerts (mock/teleport/tower mismatch). Slide se band. */}
+        {isManager && (
+          <button
+            onClick={() => setShowSalesLive(true)}
+            className="glass-card relative flex items-center gap-2 rounded-full py-2.5 pl-4 pr-5 text-[14.5px] font-bold text-sky-300 transition active:scale-95"
+          >
+            <RadioTower className="h-4 w-4 text-sky-300/80" />
+            Sales Tour Live
+          </button>
+        )}
       </div>
 
       {/* DUTY TOGGLE — FIXED bottom-RIGHT (Boss order 2026-10-26: "button ko right
@@ -1882,6 +1897,14 @@ export default function Home({ profile, onLogout }: HomeProps) {
           pinned={pinnedUids.includes(detailTarget.uid)}
           onTogglePin={() => togglePin(detailTarget.uid)}
           onBack={() => setDetailTarget(null)}
+        />
+      )}
+
+      {/* SALES — TOUR LIVE (Boss 2026-11-17): manager ka hybrid-engine board */}
+      {showSalesLive && (
+        <SalesLiveScreen
+          profile={profile}
+          onBack={() => setShowSalesLive(false)}
         />
       )}
 

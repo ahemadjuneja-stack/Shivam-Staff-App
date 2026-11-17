@@ -9,6 +9,8 @@ import { resolveUserDocByPhone } from './lib/userResolve';
 import { diagInitVersion, diagSetIdentity, diagLog } from './lib/diag';
 import { fetchAppVersionInfo } from './lib/reporting';
 import { LocationGuard } from './lib/locationGuard';
+import { syncCellDbToNative } from './lib/salesLive';
+import { SHOP_CENTER_LOCKED } from './lib/geofence';
 import { UserProfile } from './types';
 import AuthScreen from './screens/Auth';
 import HomeScreen from './screens/Home';
@@ -320,6 +322,13 @@ export default function App() {
   // duty sync Firestore me jaate rehte hain. Logout / role-change (live watcher
   // se) / manager-worker switch par service stop. Worker/manager tracked nahi
   // (unke apne systems — native side bhi sales-only guard rakhta hai).
+  //
+  // HYBRID TOUR ENGINE (Boss order 2026-11-17): HOME BASE (BOSS-LOCKED shop
+  // center + sales ka apna city) native ko bhejte hain — native TOUR/HOME
+  // mode decide karta hai (10km+ door = tour = GPS band, tower-ID engine,
+  // 15-min manager sync). Sath me CELL TOWER DB sync (Firestore cell_towers
+  // -> native cache) — "where is my train" offline layer (net band hone par
+  // tower se city).
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     if (profile?.role === 'sales' && profile?.uid) {
@@ -328,10 +337,17 @@ export default function App() {
           uid: profile.uid,
           name: profile.name,
           role: 'sales',
-          versionCode: v.appVersionCode
+          versionCode: v.appVersionCode,
+          homeLat: SHOP_CENTER_LOCKED.lat,
+          homeLng: SHOP_CENTER_LOCKED.lng,
+          homeCity: profile.city
         }).catch(() => {}))
         .catch(() => {});
       diagLog('bg_track_start');
+      // TOWER DB SYNC (Boss 2026-11-17): team ke learned towers is phone ke
+      // native cache me merge — offline city resolution ke liye. App open par
+      // ek baar (incremental — cheap).
+      syncCellDbToNative().catch(() => {});
     } else {
       LocationGuard.stopTracking().catch(() => {});
     }

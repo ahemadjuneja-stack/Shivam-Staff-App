@@ -21,6 +21,7 @@ import android.provider.Settings;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -170,6 +171,9 @@ public class LocationGuardPlugin extends Plugin {
             String name = call.getString("name");
             String role = call.getString("role", "");
             double versionCode = call.getDouble("versionCode", 0d);
+            double homeLat = call.getDouble("homeLat", 0d);
+            double homeLng = call.getDouble("homeLng", 0d);
+            String homeCity = call.getString("homeCity", "");
             if (uid == null || uid.length() < 4 || !"sales".equals(role)) {
                 // sirf sales background-tracked hai (Boss: "salesmen ka duty")
                 call.resolve();
@@ -178,12 +182,19 @@ public class LocationGuardPlugin extends Plugin {
             Context app = getContext().getApplicationContext();
             SharedPreferences p = app.getSharedPreferences(LocationTrackService.PREFS, Context.MODE_PRIVATE);
             boolean firstTime = !uid.equals(p.getString("uid", null));
-            p.edit()
+            SharedPreferences.Editor e = p.edit()
                     .putString("uid", uid)
                     .putString("name", name == null || name.length() == 0 ? "Staff" : name)
                     .putString("role", "sales")
-                    .putInt("versionCode", (int) versionCode)
-                    .apply();
+                    .putInt("versionCode", (int) versionCode);
+            // HOME BASE (Boss order 2026-11-17 — hybrid tour engine): shop center
+            // + sales ka apna city. Native ise se TOUR mode decide karta hai
+            // (10km+ door = tour = GPS band, tower engine). SharedPreferences
+            // me double nahi hota — longBits format (service same padhta hai).
+            e.putLong("homeLat", Double.doubleToRawLongBits(homeLat));
+            e.putLong("homeLng", Double.doubleToRawLongBits(homeLng));
+            e.putString("homeCity", homeCity == null ? "" : homeCity);
+            e.apply();
             Activity act = getActivity();
             if (act != null) {
                 requestPermissionsBestEffort(act);
@@ -228,6 +239,58 @@ public class LocationGuardPlugin extends Plugin {
             call.resolve();
         } catch (Exception e) {
             call.resolve();
+        }
+    }
+
+    // ================= CELL TOWER DB (Boss order 2026-11-17) =================
+
+    /**
+     * JS (salesLive.syncCellDbToNative) Firestore cell_towers collection se
+     * TOWER DB le kar yahan push karta hai — native CellDbCache file me MERGE
+     * hota hai. Ye hi offline "where is my train" layer hai: dusré staff ke
+     * learned towers is phone par bhi available ho jate hain (net band hone
+     * par tower key se city nikalti hai).
+     */
+    @PluginMethod
+    public void pushCellDb(PluginCall call) {
+        try {
+            JSArray towers = call.getArray("towers");
+            if (towers == null) {
+                call.resolve();
+                return;
+            }
+            Context app = getContext().getApplicationContext();
+            int n = new CellDbCache(app).merge(towers);
+            JSObject ret = new JSObject();
+            ret.put("merged", n);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.resolve(); // sync fail = sirf native self-learning ka DB chalega
+        }
+    }
+
+    /**
+     * Current serving tower read (diagnostics/gate display ke liye):
+     * {ok, key, mcc, mnc, lac, cid, dbm} — key = mcc-mnc-lac-cid.
+     */
+    @PluginMethod
+    public void getCellInfo(PluginCall call) {
+        try {
+            CellTowerWatcher.TowerSnapshot s = CellTowerWatcher.read(getContext().getApplicationContext());
+            JSObject ret = new JSObject();
+            ret.put("ok", s.ok);
+            ret.put("key", s.key == null ? "" : s.key);
+            ret.put("mcc", s.mcc == null ? "" : s.mcc);
+            ret.put("mnc", s.mnc == null ? "" : s.mnc);
+            ret.put("lac", s.lac);
+            ret.put("cid", s.cid);
+            ret.put("dbm", s.dbm);
+            call.resolve(ret);
+        } catch (Exception e) {
+            JSObject ret = new JSObject();
+            ret.put("ok", false);
+            ret.put("key", "");
+            call.resolve(ret);
         }
     }
 
